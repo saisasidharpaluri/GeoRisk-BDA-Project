@@ -1,0 +1,9 @@
+.venv/
+.runtime-packages/
+__pycache__/
+*.py[cod]
+.env
+.aws/
+.pytest_cache/
+output/data/
+*.log

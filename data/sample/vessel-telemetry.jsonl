@@ -1,0 +1,3 @@
+{"schema_version":1,"event_id":"sample-vessel-001","event_time":"2026-10-04T09:00:00Z","vessel_id":"VESSEL-101","latitude":37.7749,"longitude":-122.4194,"speed_knots":12.4,"heading_deg":85}
+{"schema_version":1,"event_id":"sample-vessel-002","event_time":"2026-10-04T09:00:15Z","vessel_id":"VESSEL-205","latitude":37.8010,"longitude":-122.4050,"speed_knots":8.7,"heading_deg":110}
+{"schema_version":1,"event_id":"sample-vessel-003","event_time":"2026-10-04T09:00:30Z","vessel_id":"VESSEL-309","latitude":34.0522,"longitude":-118.2437,"speed_knots":14.1,"heading_deg":170}
