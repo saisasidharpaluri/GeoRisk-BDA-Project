@@ -1,1 +1,1 @@
-"""GeoRisk-Spark foundation package."""
+"""GeoRisk-Spark semester project scaffold."""

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://georisk-spark.example/schemas/v1/risk-event.schema.json",
+  "title": "GeoRisk risk event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_time", "vessel_id", "h3_index", "h3_resolution", "risk_alert", "matching_hazards"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_time": {"type": "string", "format": "date-time"},
+    "vessel_id": {"type": "string"},
+    "h3_index": {"type": "string", "minLength": 1},
+    "h3_resolution": {"type": "integer", "minimum": 0, "maximum": 15},
+    "risk_alert": {"type": "boolean"},
+    "matching_hazards": {"type": "array", "items": {"type": "object"}}
+  }
+}

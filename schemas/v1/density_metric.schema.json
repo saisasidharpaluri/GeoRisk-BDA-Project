@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://georisk-spark.example/schemas/v1/density-metric.schema.json",
+  "title": "GeoRisk density metric v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "window_start", "window_end", "h3_index", "h3_resolution", "unique_vessel_count"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "window_start": {"type": "string", "format": "date-time"},
+    "window_end": {"type": "string", "format": "date-time"},
+    "h3_index": {"type": "string", "minLength": 1},
+    "h3_resolution": {"type": "integer", "minimum": 0, "maximum": 15},
+    "unique_vessel_count": {"type": "integer", "minimum": 0}
+  }
+}

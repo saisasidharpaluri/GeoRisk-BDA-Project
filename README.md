@@ -1,32 +1,31 @@
 # GeoRisk-Spark
 
-GeoRisk-Spark is a semester project exploring how a streaming data pipeline can help logistics teams spot vessel exposure to marine hazards and congestion. It uses synthetic data and H3 cells for a repeatable demonstration. It is an academic prototype, not an operational navigation or safety system.
+GeoRisk-Spark is a four-person Big Data Analytics semester project. The planned system will process synthetic vessel telemetry and marine hazard alerts with H3 and Spark, store results on AWS, estimate demonstration delays, compare safer routes, and show results in a dashboard.
 
-## First foundation
+This repository currently contains **scaffold only**: workstream folders, starter module interfaces, shared event schemas, configuration examples, and the project guide. The modules raise `NotImplementedError` until their owners implement them. No streaming job, AWS resources, model, route optimizer, dashboard, or sample-data processor is implemented yet.
 
-The current foundation reads a small vessel telemetry sample and a GeoJSON storm polygon, maps positions and polygon coverage to H3 cells, flags matching vessels, and writes inspectable JSON Lines output. It runs locally and does not create AWS resources.
+## Workstreams
 
-### Requirements
+| Owner | Area | Scaffold location |
+| --- | --- | --- |
+| Member 1 | Synthetic event generation, event contracts, Kinesis publishing | `src/georisk/ingestion/` |
+| Member 2 | Spark Structured Streaming, H3 indexing, risk and density outputs | `src/georisk/processing/` |
+| Member 3 | S3/Parquet lake, Glue Catalog, Athena, Spark MLlib delay baseline | `src/georisk/storage_analytics/` |
+| Member 4 | Risk-weighted route comparison and Streamlit dashboard | `src/georisk/route_dashboard/` |
 
-- Python 3.10 or newer
-- Install the single dependency with `python -m pip install -r requirements.txt`
+The JSON Schema contracts in `schemas/v1/` are the shared interfaces. Coordinate pairs use latitude/longitude for vessel events and GeoJSON longitude/latitude order for hazard geometry. H3 cell matching is an approximate spatial filter, not exact polygon containment.
 
-### Run
+## Planned AWS path
 
-```powershell
-python src/georisk/foundation.py --telemetry data/sample/vessel-telemetry.jsonl --hazards data/sample/weather-alerts.geojson --output output/data/risk-events.jsonl
-```
+Amazon Kinesis Data Streams will ingest vessel and weather events; AWS Glue will run Spark Structured Streaming; Amazon S3 will hold date-partitioned Parquet; and the Glue Data Catalog plus Athena will support historical SQL. Start paid or long-running resources only for short development or demo windows. AWS resources have not been provisioned.
 
-Review `output/data/risk-events.jsonl`. The sample storm is deliberately large enough that its interior H3 cells cover the sample vessel locations. Resolution 7 is the default; use `--resolution 8` to compare a finer grid.
+## Collaboration
 
-## Project roadmap
+- Use one feature branch per cohesive task and open a pull request to `main` for teammate review.
+- Keep commits focused and push after each integrated milestone. Never force-push `main`.
+- Keep AWS credentials in a local profile or SSO session. Never commit credentials or generated data.
+- Agree on schema changes with all owners and update `schemas/v1/` and the guide together.
 
-The semester roadmap, four-person work split, architecture, data contracts, milestones, cloud plan, validation criteria, and demo guide are in [the team project guide](output/pdf/GeoRisk-Spark-Team-Project-Guide.pdf).
+## Project guide
 
-## Cloud direction
-
-The planned AWS path uses Amazon Kinesis Data Streams for telemetry and weather-alert events, AWS Glue Spark streaming for spatial processing, Amazon S3 with Parquet for the data lake, and AWS Glue Data Catalog plus Athena for SQL analytics. Cloud resources are added in later milestones and should only run during development or demos. The initial foundation is local and has no AWS bill.
-
-## Important spatial note
-
-H3 is a discrete spatial index. The prototype covers each storm polygon with H3 cells and checks whether a vessel's cell is in that covered set. This is a fast coarse spatial filter, not exact polygon containment. Boundary-sensitive production decisions would need an additional geometry check and operational validation.
+See [the team project guide](output/pdf/GeoRisk-Spark-Team-Project-Guide.pdf) for the problem statement, architecture, role responsibilities, milestones, event contracts, AWS cost guidance, and acceptance criteria.
