@@ -1,0 +1,80 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Low-cost GeoRisk-Spark foundation. Deploy only for bounded demos.",
+  "Parameters": {
+    "ProjectBucketName": {
+      "Type": "String",
+      "Description": "Globally unique S3 bucket name for GeoRisk data and checkpoints."
+    },
+    "GlueRoleArn": {
+      "Type": "String",
+      "Description": "Existing least-privilege Glue execution role ARN."
+    }
+  },
+  "Resources": {
+    "DataBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": {"Ref": "ProjectBucketName"},
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {"ServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireDemoObjects",
+              "Status": "Enabled",
+              "ExpirationInDays": 30
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        }
+      }
+    },
+    "TelemetryStream": {
+      "Type": "AWS::Kinesis::Stream",
+      "Properties": {"Name": "vessel-telemetry", "ShardCount": 1, "RetentionPeriodHours": 24}
+    },
+    "WeatherAlertStream": {
+      "Type": "AWS::Kinesis::Stream",
+      "Properties": {"Name": "weather-alerts", "ShardCount": 1, "RetentionPeriodHours": 24}
+    },
+    "GlueDatabase": {
+      "Type": "AWS::Glue::Database",
+      "Properties": {
+        "CatalogId": {"Ref": "AWS::AccountId"},
+        "DatabaseInput": {"Name": "georisk"}
+      }
+    },
+    "GlueLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {"LogGroupName": "/aws-glue/jobs/georisk", "RetentionInDays": 14}
+    },
+    "AthenaWorkGroup": {
+      "Type": "AWS::Athena::WorkGroup",
+      "Properties": {
+        "Name": "georisk",
+        "State": "ENABLED",
+        "WorkGroupConfiguration": {
+          "ResultConfiguration": {
+            "OutputLocation": {"Fn::Sub": "s3://${ProjectBucketName}/athena-results/"}
+          }
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "DataBucket": {"Value": {"Ref": "DataBucket"}},
+    "TelemetryStream": {"Value": {"Ref": "TelemetryStream"}},
+    "WeatherAlertStream": {"Value": {"Ref": "WeatherAlertStream"}},
+    "GlueDatabase": {"Value": {"Ref": "GlueDatabase"}},
+    "GlueRoleArn": {"Value": {"Ref": "GlueRoleArn"}}
+  }
+}

@@ -2,8 +2,12 @@
 .runtime-packages/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .env
 .aws/
 .pytest_cache/
 output/data/
+output/processed/
+output/lake/
+output/reports/
 *.log

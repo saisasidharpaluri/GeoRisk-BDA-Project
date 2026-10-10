@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "event_time": {"type": "string", "format": "date-time"},
-    "vessel_id": {"type": "string"},
+    "vessel_id": {"type": "string", "minLength": 1},
     "h3_index": {"type": "string", "minLength": 1},
     "h3_resolution": {"type": "integer", "minimum": 0, "maximum": 15},
     "risk_alert": {"type": "boolean"},
