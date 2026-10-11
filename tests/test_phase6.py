@@ -63,9 +63,9 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     assert saved["status"] == "success"
 
 
-def test_aws_foundation_template_is_safe_and_complete():
-    path = "infra/aws/georisk-foundation.template.json"
-    template = json.loads(open(path, encoding="utf-8").read())
+def test_aws_foundation_template_is_safe_and_complete(project_root):
+    path = project_root / "infra" / "aws" / "georisk-foundation.template.json"
+    template = json.loads(path.read_text(encoding="utf-8"))
     resources = template["Resources"]
     assert {"DataBucket", "TelemetryStream", "WeatherAlertStream", "GlueDatabase", "AthenaWorkGroup"} <= set(resources)
     bucket = resources["DataBucket"]["Properties"]

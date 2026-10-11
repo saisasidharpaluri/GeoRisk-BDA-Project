@@ -10,18 +10,18 @@ from georisk.deployment import (
 )
 
 
-def _template_path():
-    return "infra/aws/georisk-foundation.template.json"
+def _template_path(project_root):
+    return project_root / "infra" / "aws" / "georisk-foundation.template.json"
 
 
-def test_foundation_template_has_required_controls():
-    result = validate_foundation_template(load_template(_template_path()))
+def test_foundation_template_has_required_controls(project_root):
+    result = validate_foundation_template(load_template(_template_path(project_root)))
     assert result["status"] == "accepted"
     assert result["passed"] is True
 
 
-def test_foundation_template_rejects_public_bucket_configuration():
-    template = load_template(_template_path())
+def test_foundation_template_rejects_public_bucket_configuration(project_root):
+    template = load_template(_template_path(project_root))
     unsafe = copy.deepcopy(template)
     unsafe["Resources"]["DataBucket"]["Properties"][
         "PublicAccessBlockConfiguration"
@@ -45,12 +45,12 @@ def test_aws_deployment_settings_require_role_and_bucket():
     assert validate_deployment_settings(invalid)["passed"] is False
 
 
-def test_build_deployment_plan_never_provisions_and_is_ready(tmp_path):
+def test_build_deployment_plan_never_provisions_and_is_ready(tmp_path, project_root):
     config = GeoRiskConfig(
         deployment_mode="aws",
         aws_project_bucket_name="georisk-demo-bucket",
         aws_glue_role_arn="arn:aws:iam::123456789012:role/GeoRiskGlueRole",
-        foundation_template_path=_template_path(),
+        foundation_template_path=_template_path(project_root),
         deployment_plan_path=tmp_path / "plan.json",
     )
     plan = build_deployment_plan(config)
