@@ -40,23 +40,14 @@ def _window_start(value: datetime) -> datetime:
     )
 
 
-def _hazard_cells(alert: Mapping[str, Any], resolution: int) -> set[str]:
-    return polygon_to_cells(alert["geometry"], resolution)
-
-
 def _matching_hazards(
     cell: str,
     event_time: datetime,
-    alerts: Iterable[Mapping[str, Any]],
-    resolution: int,
+    coverage: dict[str, list[tuple[dict[str, Any], datetime, datetime]]],
 ) -> list[dict[str, Any]]:
     matches = []
-    for alert in alerts:
-        valid_from = _parse_utc(alert["valid_from"])
-        valid_until = _parse_utc(alert["valid_until"])
-        if valid_from <= event_time < valid_until and cell in _hazard_cells(
-            alert, resolution
-        ):
+    for alert, valid_from, valid_until in coverage.get(cell, []):
+        if valid_from <= event_time < valid_until:
             matches.append(
                 {
                     "alert_id": alert["alert_id"],
@@ -83,13 +74,20 @@ def process_events(
         if _parse_utc(alert["valid_until"]) <= _parse_utc(alert["valid_from"]):
             raise ValueError(f"alert {alert['alert_id']} has an invalid validity range")
 
+    coverage: dict[str, list[tuple[dict[str, Any], datetime, datetime]]] = {}
+    for alert in alert_records:
+        valid_from = _parse_utc(alert["valid_from"])
+        valid_until = _parse_utc(alert["valid_until"])
+        for cell in polygon_to_cells(alert["geometry"], resolution):
+            coverage.setdefault(cell, []).append((alert, valid_from, valid_until))
+
     risk_events = []
     density_keys: set[tuple[datetime, datetime, str, str]] = set()
     for event in telemetry_records:
         validate_event("vessel_telemetry", event)
         event_time = _parse_utc(event["event_time"])
         cell = point_to_cell(event["latitude"], event["longitude"], resolution)
-        matches = _matching_hazards(cell, event_time, alert_records, resolution)
+        matches = _matching_hazards(cell, event_time, coverage)
         risk_events.append(
             {
                 "schema_version": SCHEMA_VERSION,

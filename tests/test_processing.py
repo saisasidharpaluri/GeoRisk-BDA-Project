@@ -4,6 +4,7 @@ import json
 import h3
 import pytest
 
+import georisk.processing.stream_job as stream_job
 from georisk.contracts import ContractValidationError
 from georisk.processing.h3_index import point_to_cell, polygon_to_cells
 from georisk.processing.stream_job import process_events, run_streaming_job
@@ -128,3 +129,27 @@ def test_local_runner_reads_and_writes_jsonl(tmp_path):
     assert result["risk_events"][0]["risk_alert"] is True
     assert (output_dir / "risk-events.jsonl").exists()
     assert (output_dir / "density-metrics.jsonl").exists()
+
+
+def test_polygon_coverage_computed_once_per_alert(monkeypatch):
+    calls = 0
+    original_polygon_to_cells = stream_job.polygon_to_cells
+
+    def counting_polygon_to_cells(geometry, resolution):
+        nonlocal calls
+        calls += 1
+        return original_polygon_to_cells(geometry, resolution)
+
+    monkeypatch.setattr(stream_job, "polygon_to_cells", counting_polygon_to_cells)
+    second_alert = _alert(center_latitude=14, center_longitude=80)
+    second_alert["alert_id"] = "alert-2"
+    second_alert["event_id"] = "alert-event-2"
+    telemetry = [_telemetry(f"vessel-{index}", 12, 78) for index in range(20)]
+    results = process_events(telemetry, [_alert(), second_alert])
+
+    assert calls == 2
+    assert len(results["risk_events"]) == 20
+    assert all(
+        [hazard["alert_id"] for hazard in event["matching_hazards"]] == ["alert-1"]
+        for event in results["risk_events"]
+    )

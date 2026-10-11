@@ -16,6 +16,11 @@ event, and creates 15-minute unique-vessel density metrics. The local runner
 accepts Phase 2 JSONL files through `input_dir` and writes `risk-events.jsonl`
 and `density-metrics.jsonl` when `output_dir` is configured.
 
+Each batch computes H3 coverage once per alert and indexes the alerts by cell.
+Telemetry matching checks only the alerts covering its cell, applies the
+half-open validity interval (`valid_from <= event_time < valid_until`), and
+returns matching hazards sorted by `alert_id`.
+
 H3 coverage uses the library's standard cell-center containment. It is an
 explainable candidate screen, not exact polygon containment; the selected H3
 resolution is retained on every output.
