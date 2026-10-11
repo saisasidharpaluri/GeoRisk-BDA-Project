@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import georisk.contracts as contracts
 from georisk.contracts import (
     ContractValidationError,
     is_valid_event,
@@ -132,3 +133,22 @@ def test_invalid_event_type_is_rejected():
 def test_unknown_contract_is_rejected():
     with pytest.raises(ValueError, match="Unsupported contract"):
         load_schema("unknown")
+
+
+def test_validator_is_built_once_per_contract(monkeypatch):
+    contracts._validator.cache_clear()
+    calls = 0
+    original_load_schema = contracts.load_schema
+
+    def counting_load_schema(contract):
+        nonlocal calls
+        calls += 1
+        return original_load_schema(contract)
+
+    monkeypatch.setattr(contracts, "load_schema", counting_load_schema)
+    try:
+        for _ in range(3):
+            validate_event("vessel_telemetry", _telemetry())
+        assert calls == 1
+    finally:
+        contracts._validator.cache_clear()

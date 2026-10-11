@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from importlib.abc import Traversable
+from functools import lru_cache
 from importlib.resources import files
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError, ValidationError
+
+if TYPE_CHECKING:
+    from importlib.abc import Traversable
 
 SCHEMA_VERSION = 1
 SUPPORTED_CONTRACTS = frozenset(
@@ -62,14 +65,18 @@ def load_schema(contract: str) -> dict[str, Any]:
     return schema
 
 
+@lru_cache(maxsize=None)
+def _validator(contract: str) -> Draft202012Validator:
+    """Build one reusable validator per contract."""
+    return Draft202012Validator(load_schema(contract), format_checker=FORMAT_CHECKER)
+
+
 def validate_event(contract: str, event: Mapping[str, Any]) -> None:
     """Validate an event and raise one error containing all schema violations."""
     if not isinstance(event, Mapping):
         raise TypeError("event must be a mapping")
 
-    validator = Draft202012Validator(
-        load_schema(contract), format_checker=FORMAT_CHECKER
-    )
+    validator = _validator(contract)
     errors = sorted(validator.iter_errors(dict(event)), key=lambda error: list(error.path))
     if errors:
         messages = [

@@ -8,3 +8,6 @@ so validation also works from an installed wheel outside the source checkout, an
 enforces UTC `date-time` values. Invalid records should be quarantined by the
 streaming layer rather than silently accepted. Hazard polygon coordinates use
 GeoJSON longitude/latitude order and must contain at least one ring.
+
+Validation reuses one cached validator per contract. The public `load_schema()`
+helper remains uncached and returns a freshly loaded schema on each call.
