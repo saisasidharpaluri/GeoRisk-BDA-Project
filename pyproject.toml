@@ -33,3 +33,6 @@ addopts = "-ra"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+georisk = ["schemas/README.md", "schemas/v1/*.json", "schemas/v1/examples/*/*.json", "storage_analytics/sql/*.sql"]

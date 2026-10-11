@@ -7,7 +7,7 @@ Own synthetic event generation, repeatable replay, validation, and publishing to
 - `generator.py`: deterministic telemetry and alert generation.
 - `kinesis_producer.py`: publish versioned events to Kinesis.
 
-Use the schemas in `schemas/v1/`. Preserve event IDs and UTC event timestamps. `generate_events()` returns deterministic `telemetry` and `weather_alerts` lists. `replay_events()` provides bounded replay with clear generated, published, and rejected counters. `write_jsonl()` is the local sink for development and fixtures.
+Use the schemas in `src/georisk/schemas/v1/`. Preserve event IDs and UTC event timestamps. `generate_events()` returns deterministic `telemetry` and `weather_alerts` lists. `replay_events()` provides bounded replay with clear generated, published, and rejected counters. `write_jsonl()` is the local sink for development and fixtures.
 
 The two stream names are `vessel-telemetry` and `weather-alerts`. The Kinesis
 adapter validates an event before publishing and uses vessel ID or alert ID as

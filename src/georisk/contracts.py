@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
+from importlib.abc import Traversable
+from importlib.resources import files
 from typing import Any, Mapping
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -38,12 +39,12 @@ class ContractValidationError(ValueError):
         super().__init__(f"{contract} contract validation failed: {details}")
 
 
-def _schema_path(contract: str) -> Path:
+def _schema_path(contract: str) -> Traversable:
     if contract not in SUPPORTED_CONTRACTS:
         supported = ", ".join(sorted(SUPPORTED_CONTRACTS))
         raise ValueError(f"Unsupported contract '{contract}'. Expected one of: {supported}")
     return (
-        Path(__file__).resolve().parents[2]
+        files("georisk")
         / "schemas"
         / "v1"
         / f"{contract}.schema.json"
@@ -54,8 +55,7 @@ def load_schema(contract: str) -> dict[str, Any]:
     """Load and validate one checked-in JSON Schema."""
     path = _schema_path(contract)
     try:
-        with path.open(encoding="utf-8") as schema_file:
-            schema = json.load(schema_file)
+        schema = json.loads(path.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
     except (OSError, json.JSONDecodeError, SchemaError) as exc:
         raise RuntimeError(f"Unable to load schema '{path}': {exc}") from exc

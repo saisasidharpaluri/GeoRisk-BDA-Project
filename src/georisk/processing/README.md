@@ -22,4 +22,4 @@ resolution is retained on every output.
 
 ## Handoff
 
-Consume Member 1's event schemas and publish risk and density rows using `schemas/v1/risk_event.schema.json` and `schemas/v1/density_metric.schema.json`.
+Consume Member 1's event schemas and publish risk and density rows using `src/georisk/schemas/v1/risk_event.schema.json` and `src/georisk/schemas/v1/density_metric.schema.json`.

@@ -17,7 +17,7 @@ later deployment phase.
 | Member 3 | S3/Parquet lake, Glue Catalog, Athena, Spark MLlib delay baseline | `src/georisk/storage_analytics/` |
 | Member 4 | Risk-weighted route comparison and Streamlit dashboard | `src/georisk/route_dashboard/` |
 
-The JSON Schema contracts in `schemas/v1/` are the shared interfaces. Coordinate pairs use latitude/longitude for vessel events and GeoJSON longitude/latitude order for hazard geometry. H3 cell matching is an approximate spatial filter, not exact polygon containment.
+The JSON Schema contracts in `src/georisk/schemas/v1/` are the shared interfaces. Coordinate pairs use latitude/longitude for vessel events and GeoJSON longitude/latitude order for hazard geometry. H3 cell matching is an approximate spatial filter, not exact polygon containment.
 
 ## Local setup
 
@@ -148,7 +148,7 @@ Amazon Kinesis Data Streams will ingest vessel and weather events; AWS Glue will
 - Use one feature branch per cohesive task and open a pull request to `main` for teammate review.
 - Keep commits focused and push after each integrated milestone. Never force-push `main`.
 - Keep AWS credentials in a local profile or SSO session. Never commit credentials or generated data.
-- Agree on schema changes with all owners and update `schemas/v1/` and the guide together.
+- Agree on schema changes with all owners and update `src/georisk/schemas/v1/` and the guide together.
 
 ## Project guide
 
