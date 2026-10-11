@@ -29,14 +29,14 @@ def _telemetry(vessel_id, latitude, longitude, minutes=0):
     }
 
 
-def _alert(center_latitude=12.0, center_longitude=78.0, until_minutes=30):
+def _alert(center_latitude=12.0, center_longitude=78.0, until_minutes=30, from_minutes=-1):
     size = 0.1
     return {
         "schema_version": 1,
         "event_id": "alert-event",
         "alert_id": "alert-1",
         "event_time": _timestamp(-1),
-        "valid_from": _timestamp(-1),
+        "valid_from": _timestamp(from_minutes),
         "valid_until": _timestamp(until_minutes),
         "hazard_type": "storm",
         "severity": 5,
@@ -153,3 +153,68 @@ def test_polygon_coverage_computed_once_per_alert(monkeypatch):
         [hazard["alert_id"] for hazard in event["matching_hazards"]] == ["alert-1"]
         for event in results["risk_events"]
     )
+
+
+def test_event_on_window_boundary_starts_new_window():
+    results = process_events([_telemetry("vessel", 12, 78, minutes=15)], [])
+
+    assert len(results["density_metrics"]) == 1
+    metric = results["density_metrics"][0]
+    assert metric["window_start"] == "2026-01-01T12:15:00Z"
+    assert metric["window_end"] == "2026-01-01T12:30:00Z"
+    assert metric["unique_vessel_count"] == 1
+
+
+def test_alert_not_yet_active_does_not_match():
+    results = process_events([_telemetry("vessel", 12, 78)], [_alert(from_minutes=5)])
+
+    event = results["risk_events"][0]
+    assert event["risk_alert"] is False
+    assert event["matching_hazards"] == []
+
+
+def test_validity_interval_is_half_open():
+    results = process_events(
+        [_telemetry("vessel", 12, 78, minutes=0), _telemetry("vessel", 12, 78, minutes=15)],
+        [_alert(from_minutes=0, until_minutes=15)],
+    )
+
+    start_event, end_event = results["risk_events"]
+    assert start_event["risk_alert"] is True
+    assert [hazard["alert_id"] for hazard in start_event["matching_hazards"]] == ["alert-1"]
+    assert end_event["risk_alert"] is False
+    assert end_event["matching_hazards"] == []
+
+
+def test_overlapping_alerts_both_reported_sorted():
+    first_alert = _alert()
+    second_alert = _alert()
+    second_alert["alert_id"] = "alert-2"
+    second_alert["event_id"] = "alert-event-2"
+    results = process_events(
+        [_telemetry("vessel", 12, 78)], [second_alert, first_alert]
+    )
+
+    event = results["risk_events"][0]
+    assert event["risk_alert"] is True
+    assert [hazard["alert_id"] for hazard in event["matching_hazards"]] == [
+        "alert-1", "alert-2"
+    ]
+
+
+def test_multipolygon_alert_matches_second_polygon():
+    alert = _alert()
+    first_polygon = alert["geometry"]
+    second_polygon = _alert(center_latitude=14, center_longitude=80)["geometry"]
+    cell = point_to_cell(14, 80, 7)
+    assert cell not in polygon_to_cells(first_polygon, 7)
+    assert cell in polygon_to_cells(second_polygon, 7)
+    alert["geometry"] = {
+        "type": "MultiPolygon",
+        "coordinates": [first_polygon["coordinates"], second_polygon["coordinates"]],
+    }
+    results = process_events([_telemetry("vessel", 14, 80)], [alert])
+
+    event = results["risk_events"][0]
+    assert event["risk_alert"] is True
+    assert [hazard["alert_id"] for hazard in event["matching_hazards"]] == ["alert-1"]
