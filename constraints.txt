@@ -1,0 +1,5 @@
+h3==4.5.0
+jsonschema==4.26.0
+pyarrow==21.0.0
+pytest==8.4.2
+streamlit==1.65.0

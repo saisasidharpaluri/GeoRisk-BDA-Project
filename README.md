@@ -21,14 +21,21 @@ The JSON Schema contracts in `schemas/v1/` are the shared interfaces. Coordinate
 
 ## Local setup
 
-Use Python 3.10 or newer:
+Python 3.10–3.13 is supported. On this Windows PC, use Python 3.13:
 
 ```powershell
-py -m venv .venv
+py -3.13 -m venv .venv
 .venv\Scripts\Activate.ps1
-py -m pip install -e ".[test]"
-py -m pytest
+.venv\Scripts\python -m pip install -e ".[test,dashboard]" -c constraints.txt
+.venv\Scripts\python -m pytest -q
 ```
+
+### Windows Smart App Control
+
+If an import fails with `DLL load failed … An Application Control policy has
+blocked this file`, use a Python 3.13 virtual environment and install with
+`-c constraints.txt` as shown above. The constraints pin the verified package
+versions, including pyarrow 21.0.0.
 
 The shared contract validator is in `src/georisk/contracts.py`. It validates
 events against the versioned schemas before later ingestion and processing
