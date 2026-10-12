@@ -72,3 +72,32 @@ Consume Member 2's risk and density schemas. Provide Member 4 with stable Athena
 Parquet uses explicit nullable schemas; weather geometry is stored as JSON and
 restored on read. Legacy files directly under `<root>/<dataset>/` are not read
 by the zone-aware reader. Regenerate them into a fresh lake directory.
+
+## Spark MLlib delay model
+
+Set `GEORISK_DELAY_MODEL=gbt` to train a Spark MLlib pipeline containing a
+VectorAssembler over the same five FEATURES and a seeded GBTRegressor (50
+iterations, maximum depth 4). The default remains `linear`, which does not
+import or start Spark. The chronological split and noisy synthetic labels are
+shared by both models. MAE and RMSE are evaluated on held-out rows against the
+training-mean baseline; these demonstrate synthetic behavior, not real-world
+forecast accuracy.
+
+`train_and_evaluate_gbt()` returns the linear result keys plus `model_name=gbt`
+and the fitted `model`. `coefficients` is null because trees have no linear
+coefficient vector. `predict_gbt()` accepts feature-only rows and preserves their
+input order. `save_gbt_model()` saves the entire pipeline, loadable with
+`pyspark.ml.PipelineModel.load()`.
+
+The end-to-end pipeline writes `processed/delay-model-gbt/`, includes its files
+in the artifact manifest, and writes GBT predictions to the usual JSONL and
+Parquet delay-estimate outputs. The run report includes `model.model_name` for
+both model choices. From an activated WSL Spark environment:
+
+```bash
+GEORISK_DELAY_MODEL=gbt georisk-run
+```
+
+Spark model metadata contains generated identifiers and timestamps, so model
+file hashes can vary between equivalent training runs. The caller owns the
+Spark session lifecycle when invoking the pipeline as a library.

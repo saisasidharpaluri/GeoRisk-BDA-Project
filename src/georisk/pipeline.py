@@ -74,9 +74,29 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
     if len(delay_rows) < 2:
         raise ValueError("end-to-end run requires at least two telemetry-derived model rows")
     training, evaluation = split_by_time(delay_rows, settings.evaluation_fraction)
-    model = train_and_evaluate(training, evaluation)
     all_rows = training + evaluation
-    predictions = predict(model["coefficients"], all_rows)
+    if settings.delay_model == "gbt":
+        from georisk.spark_session import get_spark
+        from georisk.storage_analytics.spark_delay_model import (
+            predict_gbt, save_gbt_model, train_and_evaluate_gbt,
+        )
+
+        spark = get_spark("georisk-delay")
+        model = train_and_evaluate_gbt(spark, training, evaluation, seed=settings.seed)
+        predictions = predict_gbt(spark, model["model"], all_rows)
+        model_path = settings.processed_dir / "delay-model-gbt"
+        save_gbt_model(model["model"], model_path)
+        model_artifacts = sorted(path for path in model_path.rglob("*")
+                                 if path.is_file() and not path.name.startswith("."))
+    else:
+        model = train_and_evaluate(training, evaluation)
+        predictions = predict(model["coefficients"], all_rows)
+        model_path = settings.processed_dir / "delay-model.json"
+        model_path.write_text(json.dumps({
+            "model_name": "linear", "features": model["features"],
+            "coefficients": model["coefficients"],
+        }, indent=2, sort_keys=True), encoding="utf-8")
+        model_artifacts = [model_path]
     baseline_delay = model["baseline_predictions"][0]
     estimates = [
         {
@@ -84,7 +104,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "event_id": row["event_id"], "event_time": row["event_time"],
             "vessel_id": row["vessel_id"],
             "split": "train" if index < len(training) else "evaluation",
-            "model_name": "linear",
+            "model_name": settings.delay_model,
             "predicted_delay_hours": prediction,
             "baseline_delay_hours": baseline_delay,
             "synthetic_label_hours": row["delay_hours"],
@@ -99,11 +119,6 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
     estimates_path.write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in estimates), encoding="utf-8",
     )
-    model_path = settings.processed_dir / "delay-model.json"
-    model_path.write_text(json.dumps({
-        "model_name": "linear", "features": model["features"],
-        "coefficients": model["coefficients"],
-    }, indent=2, sort_keys=True), encoding="utf-8")
     logger.info("Model evaluated", extra={"georisk": {
         "evaluation_count": model["evaluation_count"],
         "model_metrics": model["model_metrics"], "baseline_metrics": model["baseline_metrics"],
@@ -132,7 +147,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             settings.processed_dir / "risk-events.jsonl",
             settings.processed_dir / "density-metrics.jsonl",
             estimates_path,
-            model_path,
+            *model_artifacts,
             *(path for paths in lake_paths.values() for path in paths),
         ]
     )
@@ -151,6 +166,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "acceptance_required": settings.acceptance_required,
             "strict_validation": settings.strict_validation,
             "delay_noise_std_hours": settings.delay_noise_std_hours,
+            "delay_model": settings.delay_model,
         },
         "generation": {
             "generated": generation_stats.generated,
@@ -170,6 +186,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "density_row_count": len(density_summary(settings.lake_dir)),
         },
         "model": {
+            "model_name": settings.delay_model,
             "evaluation_count": model["evaluation_count"],
             "model_metrics": model["model_metrics"],
             "baseline_metrics": model["baseline_metrics"],

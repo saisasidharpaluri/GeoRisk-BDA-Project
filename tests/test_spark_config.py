@@ -17,3 +17,10 @@ def test_spark_output_settings():
         GeoRiskConfig(spark_output_dir="not-a-path")
     with pytest.raises(ValueError, match="GEORISK_SPARK_CHECKPOINT_DIR"):
         GeoRiskConfig(spark_checkpoint_dir="not-a-path")
+
+
+def test_delay_model_setting():
+    assert GeoRiskConfig.from_env({}).delay_model == "linear"
+    assert GeoRiskConfig.from_env({"GEORISK_DELAY_MODEL": "gbt"}).delay_model == "gbt"
+    with pytest.raises(ValueError, match="GEORISK_DELAY_MODEL"):
+        GeoRiskConfig.from_env({"GEORISK_DELAY_MODEL": "unknown"})

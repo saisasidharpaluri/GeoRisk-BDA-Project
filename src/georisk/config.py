@@ -62,6 +62,7 @@ class GeoRiskConfig:
     route_risk_penalty: float = 4.0
     evaluation_fraction: float = 0.2
     delay_noise_std_hours: float = 0.25
+    delay_model: str = "linear"
     acceptance_required: bool = True
     strict_validation: bool = False
     log_level: str = "INFO"
@@ -76,6 +77,8 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if self.delay_model not in ("linear", "gbt"):
+            raise ValueError("GEORISK_DELAY_MODEL must be linear or gbt")
         for name, value in (
             ("GEORISK_SPARK_OUTPUT_DIR", self.spark_output_dir),
             ("GEORISK_SPARK_CHECKPOINT_DIR", self.spark_checkpoint_dir),
@@ -166,6 +169,7 @@ class GeoRiskConfig:
             route_risk_penalty=_float(source, "GEORISK_ROUTE_RISK_PENALTY", 4.0),
             evaluation_fraction=_float(source, "GEORISK_EVALUATION_FRACTION", 0.2),
             delay_noise_std_hours=_float(source, "GEORISK_DELAY_NOISE_STD_HOURS", 0.25),
+            delay_model=source.get("GEORISK_DELAY_MODEL", "linear"),
             acceptance_required=_boolean(source, "GEORISK_ACCEPTANCE_REQUIRED", True),
             strict_validation=_boolean(source, "GEORISK_STRICT_VALIDATION", False),
             log_level=source.get("GEORISK_LOG_LEVEL", "INFO").upper(),
