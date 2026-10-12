@@ -7,6 +7,8 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
+from georisk.geo_demo import DEMO_NODES, DEMO_SPEED_KNOTS, haversine_nm
+
 
 @dataclass(frozen=True)
 class RouteResult:
@@ -28,21 +30,32 @@ class RouteResult:
         }
 
 
+def demonstration_nodes() -> dict[str, tuple[float, float]]:
+    """Return an independent copy of the demo node coordinates."""
+    return dict(DEMO_NODES)
+
+
 def demonstration_graph() -> dict[str, list[dict[str, Any]]]:
     """Return the documented four-node synthetic sea-lane graph."""
-    return {
+    graph = {
         "port_a": [
-            {"to": "chokepoint", "travel_hours": 8.0, "risk": 0.9},
-            {"to": "outer_lane", "travel_hours": 11.0, "risk": 0.1},
+            {"to": "chokepoint", "risk": 0.9},
+            {"to": "outer_lane", "risk": 0.1},
         ],
         "chokepoint": [
-            {"to": "port_b", "travel_hours": 8.0, "risk": 0.9},
+            {"to": "port_b", "risk": 0.9},
         ],
         "outer_lane": [
-            {"to": "port_b", "travel_hours": 13.0, "risk": 0.1},
+            {"to": "port_b", "risk": 0.1},
         ],
         "port_b": [],
     }
+    for source, edges in graph.items():
+        for edge in edges:
+            distance = haversine_nm(*DEMO_NODES[source], *DEMO_NODES[edge["to"]])
+            edge["distance_nm"] = distance
+            edge["travel_hours"] = round(distance / DEMO_SPEED_KNOTS, 2)
+    return graph
 
 
 def _validate_graph(graph: Mapping[str, list[Mapping[str, Any]]]) -> None:
@@ -128,19 +141,24 @@ def find_alternative_route(
     if risk_penalty < 0 or not math.isfinite(risk_penalty):
         raise ValueError("risk_penalty must be a non-negative finite number")
     baseline = _shortest_path(graph, origin, destination, None, 0.0)
-    alternative = _shortest_path(
-        graph, origin, destination, float(risk_threshold), float(risk_penalty)
-    )
     blocked = sorted(
         (source, edge["to"])
         for source, edges in graph.items() for edge in edges
         if float(edge["risk"]) > risk_threshold
     )
-    alternative = replace(alternative, blocked_edges=tuple(blocked))
     baseline_blocked = [
         (source, target) for source, target in zip(baseline.path, baseline.path[1:])
         if (source, target) in blocked
     ]
+    if baseline_blocked:
+        alternative = _shortest_path(
+            graph, origin, destination, float(risk_threshold), float(risk_penalty)
+        )
+    else:
+        alternative = replace(
+            baseline, total_cost=baseline.travel_hours + risk_penalty * baseline.risk_score
+        )
+    alternative = replace(alternative, blocked_edges=tuple(blocked))
     travel_delta = alternative.travel_hours - baseline.travel_hours
     risk_delta = alternative.risk_score - baseline.risk_score
     explanation = "Baseline route is within the risk threshold."

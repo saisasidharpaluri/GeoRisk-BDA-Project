@@ -28,3 +28,8 @@ streamlit run src/georisk/route_dashboard/dashboard.py
 Coordinate with Member 3 on Athena query results and field names. Coordinate with Member 2 on alert and cell outputs. Keep the dashboard runnable locally before adding cloud query access.
 
 Route comparisons report all edges above the risk threshold, identify those on the baseline path, and explain the detour with travel-time and total-risk differences.
+
+`demonstration_nodes()` returns offshore Chennai coordinates. Each graph edge
+includes `distance_nm` and travel hours at 14 knots. An eligible fastest baseline
+is retained; when it is blocked, the alternative minimizes travel hours plus
+the configured risk penalty among eligible edges.

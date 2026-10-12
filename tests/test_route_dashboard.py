@@ -31,7 +31,8 @@ def test_explanation_names_blocked_edges():
     result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
     assert result["explanation"] == (
         "Edges above risk threshold 0.50 were unavailable: port_a→chokepoint (0.90), "
-        "chokepoint→port_b (0.90). Alternative adds +8.0 h and changes total risk by -1.60."
+        "chokepoint→port_b (0.90). "
+        f"Alternative adds {result['travel_hour_delta']:+.1f} h and changes total risk by -1.60."
     )
 
 
@@ -50,6 +51,21 @@ def test_route_stays_same_when_threshold_allows_baseline():
     result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 1.0)
     assert result["route_changed"] is False
     assert result["baseline"]["path"] == result["alternative"]["path"]
+
+
+def test_graph_edges_have_distance_and_consistent_hours():
+    from georisk.geo_demo import DEMO_NODES, DEMO_SPEED_KNOTS, haversine_nm
+    from georisk.route_dashboard.route_optimizer import demonstration_nodes
+
+    nodes = demonstration_nodes()
+    assert nodes == DEMO_NODES
+    nodes["port_a"] = (0, 0)
+    assert demonstration_nodes() == DEMO_NODES
+    for source, edges in demonstration_graph().items():
+        for edge in edges:
+            expected = haversine_nm(*DEMO_NODES[source], *DEMO_NODES[edge["to"]])
+            assert edge["distance_nm"] == pytest.approx(expected)
+            assert edge["travel_hours"] == round(expected / DEMO_SPEED_KNOTS, 2)
 
 
 def test_route_rejects_invalid_graph_and_unreachable_alternative():
