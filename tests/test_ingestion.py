@@ -8,6 +8,7 @@ from georisk.ingestion.generator import (
     generate_events,
     replay_events,
     write_jsonl,
+    iter_events,
 )
 from georisk.ingestion.kinesis_producer import publish_event
 
@@ -83,6 +84,63 @@ def test_jsonl_sink_writes_valid_separate_stream_files(tmp_path):
     assert len(telemetry_lines) == 3
     assert len(alert_lines) == 2
     assert json.loads(telemetry_lines[0])["vessel_id"] == "vessel-00000"
+
+
+@pytest.mark.parametrize("stream_key,stream_name", [
+    ("telemetry", "vessel-telemetry"), ("weather_alerts", "weather-alerts"),
+])
+def test_replay_counts_invalid_event_without_raising(stream_key, stream_name):
+    events = generate_events(5, 1)
+    invalid = dict(events[stream_key][0], event_time="invalid")
+    events[stream_key].insert(0, invalid)
+    published, rejected = [], []
+    stats = replay_events(
+        events, lambda stream, event: published.append((stream, event)),
+        on_invalid=lambda stream, event, exc: rejected.append((stream, event, exc)),
+    )
+    assert (stats.generated, stats.published, stats.rejected) == (6, 5, 1)
+    assert stats.generated == stats.published + stats.rejected
+    assert len(published) == 5
+    assert rejected[0][:2] == (stream_name, invalid)
+    assert isinstance(rejected[0][2], ContractValidationError)
+
+
+@pytest.mark.parametrize("invalid", [{}, None, []])
+def test_write_jsonl_quarantines_invalid_event(tmp_path, invalid):
+    events = generate_events(5, 1)
+    events["telemetry"].insert(0, invalid)
+    stats = write_jsonl(events, tmp_path)
+    assert (stats.generated, stats.published, stats.rejected) == (6, 5, 1)
+    entry = json.loads((tmp_path / "quarantine.jsonl").read_text(encoding="utf-8"))
+    assert entry["stream"] == "vessel-telemetry"
+    assert entry["record"] == invalid
+    assert entry["errors"]
+    assert len((tmp_path / "vessel-telemetry.jsonl").read_text().splitlines()) == 3
+
+
+def test_iter_events_validation_can_be_disabled_but_stream_keys_are_required():
+    events = {"weather_alerts": [{}], "telemetry": []}
+    with pytest.raises(ContractValidationError):
+        list(iter_events(events))
+    assert list(iter_events(events, validate=False)) == [("weather_alerts", {})]
+    with pytest.raises(ValueError, match="telemetry"):
+        list(iter_events({"weather_alerts": []}, validate=False))
+
+
+def test_replay_continues_after_publisher_failure_and_invalid_event():
+    calls = []
+    events = generate_events(5, 1)
+    events["telemetry"].insert(0, {})
+
+    def publish(stream, event):
+        calls.append(event)
+        if len(calls) == 1:
+            raise OSError("failed")
+
+    with pytest.raises(RuntimeError, match="2 of 6") as error:
+        replay_events(events, publish)
+    assert isinstance(error.value.__cause__, OSError)
+    assert len(calls) == 5
 
 
 class FakeKinesis:

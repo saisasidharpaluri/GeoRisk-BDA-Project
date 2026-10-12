@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import random
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from georisk.contracts import SCHEMA_VERSION, validate_event
+from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
 
 UTC = timezone.utc
 DEFAULT_START_TIME = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -135,7 +136,9 @@ def generate_events(
     return {"telemetry": telemetry, "weather_alerts": alerts}
 
 
-def iter_events(events: Mapping[str, Iterable[Event]]) -> Iterable[tuple[str, Event]]:
+def iter_events(
+    events: Mapping[str, Iterable[Event]], validate: bool = True
+) -> Iterable[tuple[str, Event]]:
     """Yield events in deterministic stream order."""
     for stream_key, contract in (
         ("weather_alerts", "weather_alert"),
@@ -145,8 +148,9 @@ def iter_events(events: Mapping[str, Iterable[Event]]) -> Iterable[tuple[str, Ev
         if records is None:
             raise ValueError(f"events must contain '{stream_key}'")
         for event in records:
-            validate_event(contract, event)
-            yield stream_key, dict(event)
+            if validate:
+                validate_event(contract, event)
+            yield stream_key, dict(event) if isinstance(event, Mapping) else event
 
 
 def replay_events(
@@ -154,6 +158,7 @@ def replay_events(
     publish: PublishFunction,
     *,
     max_events: int | None = None,
+    on_invalid: Callable[[str, Event, Exception], Any] | None = None,
 ) -> ReplayStats:
     """Publish at most ``max_events`` valid events and count failures.
 
@@ -168,13 +173,21 @@ def replay_events(
 
     generated = published = rejected = 0
     first_error: Exception | None = None
-    for stream_key, event in iter_events(events):
+    for stream_key, event in iter_events(events, validate=False):
         if max_events is not None and generated >= max_events:
             break
         generated += 1
         stream_name = (
             "weather-alerts" if stream_key == "weather_alerts" else "vessel-telemetry"
         )
+        contract = "weather_alert" if stream_key == "weather_alerts" else "vessel_telemetry"
+        try:
+            validate_event(contract, event)
+        except (ContractValidationError, TypeError) as exc:
+            rejected += 1
+            if on_invalid is not None:
+                on_invalid(stream_name, event, exc)
+            continue
         try:
             publish(stream_name, event)
         except Exception as exc:
@@ -194,23 +207,20 @@ def write_jsonl(events: Mapping[str, Iterable[Event]], output_dir: str | Path) -
     """Write validated stream fixtures to separate JSONL files."""
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
-    paths = {
-        "weather_alerts": destination / "weather-alerts.jsonl",
-        "telemetry": destination / "vessel-telemetry.jsonl",
-    }
-    counts = {key: 0 for key in paths}
-    handles = {
-        key: path.open("w", encoding="utf-8") for key, path in paths.items()
-    }
-    try:
-        for stream_key, event in iter_events(events):
-            handles[stream_key].write(json.dumps(event, sort_keys=True) + "\n")
-            counts[stream_key] += 1
-    finally:
-        for handle in handles.values():
-            handle.close()
-    return ReplayStats(
-        generated=counts["weather_alerts"] + counts["telemetry"],
-        published=counts["weather_alerts"] + counts["telemetry"],
-        rejected=0,
-    )
+    with ExitStack() as stack:
+        handles = {
+            stream: stack.enter_context((destination / f"{stream}.jsonl").open("w", encoding="utf-8"))
+            for stream in ("weather-alerts", "vessel-telemetry", "quarantine")
+        }
+
+        def publish(stream: str, event: Event) -> None:
+            handles[stream].write(json.dumps(event, sort_keys=True) + "\n")
+
+        def quarantine(stream: str, event: Event, exc: Exception) -> None:
+            publish("quarantine", {
+                "stream": stream,
+                "errors": exc.errors if isinstance(exc, ContractValidationError) else [str(exc)],
+                "record": event,
+            })
+
+        return replay_events(events, publish, on_invalid=quarantine)

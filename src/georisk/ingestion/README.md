@@ -26,3 +26,5 @@ stats = write_jsonl(events, "output/data")
 ## Handoff
 
 Give Member 2 a replayable stream and fixture events that follow the checked-in contracts. Agree how hazard validity and polygon coordinates are represented before publishing.
+
+Replay validates each event, counts invalid events as rejected, and optionally calls on_invalid(stream_name, event, exc). Invalid events do not abort replay; publisher failures still raise after the batch. The JSONL sink writes rejected records and validation errors to quarantine.jsonl. Both paths maintain generated = published + rejected.
