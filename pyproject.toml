@@ -30,7 +30,7 @@ test = [
     "duckdb>=1.5,<2",
 ]
 dashboard = [
-    "streamlit>=1.35,<2",
+    "streamlit>=1.50,<2",
     "pydeck>=0.9,<1",
 ]
 
@@ -44,4 +44,4 @@ markers = ["spark: requires PySpark and a working Java runtime"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-georisk = ["schemas/README.md", "schemas/v1/*.json", "schemas/v1/examples/README.md", "schemas/v1/examples/*/*.json", "storage_analytics/sql/*.sql"]
+georisk = ["schemas/README.md", "schemas/v1/*.json", "schemas/v1/examples/README.md", "schemas/v1/examples/*/*.json", "storage_analytics/sql/*.sql", "route_dashboard/theme.toml"]

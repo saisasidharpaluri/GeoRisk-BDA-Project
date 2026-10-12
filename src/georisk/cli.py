@@ -149,6 +149,8 @@ def _dispatch(args: argparse.Namespace, settings: GeoRiskConfig, environment: di
     elif command == "dashboard":
         from georisk.route_dashboard import dashboard
 
+        theme = Path(dashboard.__file__).resolve().with_name("theme.toml")
+        environment.setdefault("STREAMLIT_THEME_BASE", str(theme))
         return subprocess.run(
             [sys.executable, "-m", "streamlit", "run", str(Path(dashboard.__file__).resolve())],
             env=environment, check=False,

@@ -102,3 +102,17 @@ configured values. `dashboard_route(..., alerts=...)` scores the graph with the
 scenario's alerts. The "Route" tab shows the explanation, a baseline vs
 alternative table (path, hours, risk, total cost), and lane status with risk
 drivers; the map's hazard and route layers follow the same scenario.
+
+The header reads "SIMULATED DATA · H3 res N · coverage: … · window: M min"
+from `run-metadata.json` (falling back to the configured settings). The
+"Data freshness" panel shows `processed_at`, latest event time, watermark, and
+age as fresh, stale (older than `GEORISK_STALE_AFTER_MINUTES`), or unavailable.
+Metric labels carry their units. The sidebar toggle "Auto-refresh every 10 s"
+reruns the data-dependent body with `st.fragment(run_every=10)`; the directory
+fields sit in a collapsed "Data sources" expander.
+
+`theme.toml` holds the Streamlit theme (chart-paper background, navy sidebar,
+Archivo / Public Sans / IBM Plex Mono). `georisk dashboard` applies it by
+setting `STREAMLIT_THEME_BASE`; when launching `streamlit run` directly, pass
+`--theme.base src/georisk/route_dashboard/theme.toml` to get the same look.
+The dashboard extra requires `streamlit>=1.50,<2` and uses `width="stretch"`.

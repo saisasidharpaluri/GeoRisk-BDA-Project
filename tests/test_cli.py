@@ -127,6 +127,8 @@ def test_dashboard_launches_current_python_with_flag_overrides(tmp_path, monkeyp
     assert Path(command[4]).is_file()
     assert kwargs["env"]["GEORISK_INPUT_DIR"] == str(tmp_path)
     assert kwargs["env"]["GEORISK_ROUTE_RISK_PENALTY"] == "9.0"
+    assert Path(kwargs["env"]["STREAMLIT_THEME_BASE"]).name == "theme.toml"
+    assert Path(kwargs["env"]["STREAMLIT_THEME_BASE"]).is_file()
     assert not kwargs.get("shell", False)
 
 

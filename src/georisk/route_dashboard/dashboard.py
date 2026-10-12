@@ -14,9 +14,9 @@ from georisk.route_dashboard.route_optimizer import (
 )
 from georisk.route_dashboard.views import (
     ROUTE_SCENARIOS, active_alerts, compare_adjacent_windows, delay_mae, density_for_window,
-    density_windows, exposure_series, filter_risk_events, lane_status, latest_delay_estimates,
-    latest_positions, latest_risk_by_vessel, risk_table_rows, route_scenario_alerts,
-    severity_distribution,
+    density_windows, exposure_series, filter_risk_events, freshness, lane_status,
+    latest_delay_estimates, latest_positions, latest_risk_by_vessel, risk_table_rows,
+    route_scenario_alerts, severity_distribution,
 )
 
 MAP_LAYERS = (
@@ -42,6 +42,29 @@ _CSS = """
 .gr-key.hex { clip-path: polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%); }
 .gr-key.line { height: 4px; width: 20px; vertical-align: 3px; border-radius: 2px; }
 .gr-hint { font: .78rem/1.45 'Public Sans', sans-serif; color: var(--gr-slate); margin: 0 0 .4rem; }
+.gr-cartouche { padding: .2rem 0 0; }
+.gr-eyebrow { font: 600 .72rem/1.3 'IBM Plex Mono', monospace; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--gr-slate); margin: 0; }
+.gr-title { font-family: 'Archivo', sans-serif; font-stretch: 72%; font-weight: 800;
+  font-size: clamp(2.2rem, 4vw, 3.1rem); line-height: .95; letter-spacing: .005em;
+  text-transform: uppercase; color: var(--gr-ink); margin: .25rem 0 .55rem; padding: 0; }
+.gr-badges { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .7rem;
+  font: 500 .78rem/1.4 'IBM Plex Mono', monospace; color: var(--gr-ink); }
+.gr-badges .sep { color: var(--gr-rule); }
+.gr-stamp { border: 1.5px solid var(--gr-magenta); color: var(--gr-magenta); padding: 0 .45rem;
+  font-weight: 600; letter-spacing: .1em; }
+.gr-neatline { height: 7px; margin: 1rem 0 .3rem; border: 1px solid var(--gr-ink);
+  background: repeating-linear-gradient(90deg, var(--gr-ink) 0 32px, transparent 32px 64px); }
+.gr-scale { display: flex; justify-content: space-between; margin-bottom: 1.1rem;
+  font: 500 .68rem/1 'IBM Plex Mono', monospace; letter-spacing: .08em; color: var(--gr-slate); }
+.gr-kv { display: grid; grid-template-columns: auto 1fr; gap: .2rem .9rem; margin: .3rem 0 0;
+  font: .76rem/1.4 'IBM Plex Mono', monospace; color: var(--gr-ink); }
+.gr-kv dt { color: var(--gr-slate); }
+.gr-kv dd { margin: 0; overflow-wrap: anywhere; }
+.st-key-freshness h3 { font-size: .8rem; letter-spacing: .12em; text-transform: uppercase;
+  font-family: 'IBM Plex Mono', monospace; font-weight: 600; padding-top: 0; }
+.stTabs [data-baseweb="tab"] p { font-family: 'Archivo', sans-serif; font-stretch: 87.5%;
+  font-weight: 650; font-size: .98rem; letter-spacing: .02em; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 """
@@ -139,6 +162,71 @@ def dashboard_route(
     route = find_alternative_route(graph, "port_a", "port_b", risk_threshold,
                                    risk_penalty=risk_penalty)
     return {**route, "at_time": at_time, "edge_scores": graph}
+
+
+def load_run_metadata(processed_dir: str | Path) -> dict[str, Any] | None:
+    """Load ``run-metadata.json``; a missing or unreadable file returns ``None``."""
+    path = Path(processed_dir) / "run-metadata.json"
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return metadata if isinstance(metadata, dict) else None
+
+
+def _dms(value: float, positive: str, negative: str) -> str:
+    degrees, minutes = divmod(round(abs(value) * 60), 60)
+    return f"{degrees}°{minutes:02d}′{positive if value >= 0 else negative}"
+
+
+def _render_header(st: Any, metadata: dict[str, Any] | None, settings: GeoRiskConfig) -> None:
+    from html import escape
+
+    from georisk.geo_demo import DEMO_BBOX
+
+    metadata = metadata or {}
+    resolution = metadata.get("h3_resolution", settings.resolution)
+    coverage = metadata.get("coverage_mode", settings.coverage_mode)
+    window = metadata.get("window_minutes", settings.density_window_minutes)
+    west = f"{_dms(DEMO_BBOX['lat_min'], 'N', 'S')} {_dms(DEMO_BBOX['lon_min'], 'E', 'W')}"
+    east = f"{_dms(DEMO_BBOX['lat_max'], 'N', 'S')} {_dms(DEMO_BBOX['lon_max'], 'E', 'W')}"
+    badges = [f"H3 res {resolution}", f"coverage: {coverage}", f"window: {window} min"]
+    st.html(
+        '<div class="gr-cartouche">'
+        '<p class="gr-eyebrow">Bay of Bengal · offshore Chennai · maritime risk screen</p>'
+        '<h1 class="gr-title">GeoRisk-Spark</h1>'
+        '<div class="gr-badges"><span class="gr-stamp">SIMULATED DATA</span>'
+        + "".join(f'<span class="sep">·</span><span>{escape(str(badge))}</span>' for badge in badges)
+        + "</div></div>"
+        f'<div class="gr-neatline" aria-hidden="true"></div>'
+        f'<div class="gr-scale"><span>{west}</span><span>{east}</span></div>'
+    )
+
+
+def _render_freshness(st: Any, metadata: dict[str, Any] | None, settings: GeoRiskConfig) -> None:
+    from datetime import datetime, timezone
+    from html import escape
+
+    status = freshness(metadata, datetime.now(timezone.utc), settings.stale_after_minutes)
+    with st.container(border=True, key="freshness"):
+        st.subheader("Data freshness")
+        age = status["age_minutes"]
+        if status["state"] == "fresh":
+            st.success(f"Fresh · processed {age:g} min ago", icon=":material/check_circle:")
+        elif status["state"] == "stale":
+            st.warning(f"Stale · last processed {age:g} min ago (limit "
+                       f"{settings.stale_after_minutes} min). Rerun `georisk run` or the replay.",
+                       icon=":material/schedule:")
+        else:
+            st.error("Unavailable · no run-metadata.json in the processed directory. "
+                     "Run `georisk run` to create it.", icon=":material/error:")
+        rows = (("Processed at", status["processed_at"]),
+                ("Latest event", status["latest_event_time"]),
+                ("Watermark", status["watermark"]),
+                ("Age", f"{age:g} min" if age is not None else None))
+        st.html('<dl class="gr-kv">' + "".join(
+            f"<dt>{label}</dt><dd>{escape(str(value)) if value else '—'}</dd>"
+            for label, value in rows) + "</dl>")
 
 
 def _map_selection(st: Any) -> tuple[str, str] | None:
@@ -483,6 +571,98 @@ def _render_route_panel(
     )
 
 
+def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> None:
+    """Render everything that depends on loaded data; reruns alone when auto-refreshing."""
+    processed_dir = controls["processed_dir"]
+    data = load_dashboard_data(input_dir=controls["input_dir"], processed_dir=processed_dir)
+    metadata = load_run_metadata(processed_dir)
+    summary = dashboard_summary(data, resolution=settings.resolution)
+
+    at_time = summary["latest_event_time"]
+    alerts = active_alerts(data["weather_alerts"], at_time) if at_time else []
+    positions = latest_positions(data["telemetry"])
+    latest_risk = latest_risk_by_vessel(data["risk_events"])
+    exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
+
+    header_column, freshness_column = st.columns([2.6, 1], gap="medium",
+                                                 vertical_alignment="bottom")
+    with header_column:
+        _render_header(st, metadata, settings)
+    with freshness_column:
+        _render_freshness(st, metadata, settings)
+    _render_kpis(st, alerts=alerts, exposed=exposed, positions=positions, data=data, latest=at_time)
+    if not summary["has_data"]:
+        st.warning("No vessel telemetry or risk events were found in the selected directories. "
+                   "Run `georisk run` (or start a replay), then check the data sources in the "
+                   "sidebar.", icon=":material/database:")
+
+    scenario = controls["scenario"]
+    route_time = max((row["event_time"] for row in data["telemetry"]), default=at_time)
+    scenario_alerts = (route_scenario_alerts(scenario, data["weather_alerts"], route_time)
+                       if route_time else [])
+    map_alerts = active_alerts(scenario_alerts, route_time) if route_time else []
+    try:
+        route = dashboard_route(data, resolution=settings.resolution,
+                                coverage_mode=settings.coverage_mode,
+                                risk_threshold=controls["threshold"],
+                                risk_penalty=controls["penalty"], alerts=scenario_alerts)
+        route_error = None
+    except ValueError as exc:
+        route, route_error = None, str(exc)
+
+    map_column, inspect_column = st.columns([2.6, 1], gap="medium")
+    risk_tab, route_tab, density_tab, delay_tab = st.tabs(
+        ["Risk", "Route", "Corridor density", "Delay"])
+    with risk_tab:
+        _render_risk_panel(st, data["risk_events"], settings)
+    with route_tab:
+        _render_route_panel(st, route, route_error, scenario)
+    with density_tab:
+        window = _render_density_panel(st, data["density_metrics"], settings)
+    with delay_tab:
+        _render_delay_panel(st, load_delay_estimates(processed_dir))
+    density_rows = density_for_window(data["density_metrics"], window) if window else []
+    with map_column:
+        _render_map(st, controls["layers"], positions=positions, exposed=exposed,
+                    alerts=map_alerts, risk_events=data["risk_events"],
+                    density_rows=density_rows, route=route)
+        if scenario != ROUTE_SCENARIOS[0]:
+            st.caption(f"Route what-if “{scenario}” is active: hazard zones and routes on the "
+                       "map reflect the scenario, not the loaded alerts.")
+    with inspect_column:
+        with st.container(height=640, border=True):
+            _render_inspector(st, positions, latest_risk, map_alerts, route_time, settings)
+
+
+def _sidebar_controls(st: Any, settings: GeoRiskConfig) -> dict[str, Any]:
+    sidebar = st.sidebar
+    sidebar.subheader("Route what-if")
+    scenario = sidebar.selectbox(
+        "Hazard scenario", ROUTE_SCENARIOS, key="route_scenario",
+        help="As generated uses the loaded alerts. Close inner lane adds a synthetic "
+             "severity-5 closure at the inner-lane chokepoint.",
+    )
+    threshold = sidebar.slider("Route risk threshold", 0.0, 1.0, settings.route_risk_threshold,
+                               0.05, key="route_threshold",
+                               help="Lanes with risk above this are closed to the alternative.")
+    penalty = sidebar.number_input("Route risk penalty (h per unit risk)", min_value=0.0,
+                                   value=settings.route_risk_penalty, key="route_penalty",
+                                   help="Hours added per unit of lane risk when ranking routes.")
+    sidebar.subheader("Map layers")
+    layers = {name: sidebar.checkbox(label, value=True, key=f"layer_{name}")
+              for name, label in MAP_LAYERS}
+    sidebar.subheader("Live")
+    auto_refresh = sidebar.toggle("Auto-refresh every 10 s", key="auto_refresh",
+                                  help="Reload the files every 10 seconds while a replay runs.")
+    with sidebar.expander("Data sources"):
+        input_dir = st.text_input("Input directory", str(settings.input_dir), key="input_dir")
+        processed_dir = st.text_input("Processed directory", str(settings.processed_dir),
+                                      key="processed_dir")
+    return {"scenario": scenario, "threshold": threshold, "penalty": penalty,
+            "layers": layers, "auto_refresh": auto_refresh,
+            "input_dir": input_dir, "processed_dir": processed_dir}
+
+
 def main() -> None:
     """Render the local dashboard; cloud query adapters can replace the loader."""
     try:
@@ -493,74 +673,13 @@ def main() -> None:
         ) from exc
 
     settings = GeoRiskConfig.from_env()
-    st.set_page_config(page_title="GeoRisk-Spark", layout="wide")
+    st.set_page_config(page_title="GeoRisk-Spark", page_icon=":material/sailing:", layout="wide")
     st.html(_CSS)
-    st.title("GeoRisk-Spark")
-    st.caption("Synthetic demonstration data | H3 candidate risk screen")
-    input_dir = st.sidebar.text_input("Input directory", str(settings.input_dir))
-    processed_dir = st.sidebar.text_input("Processed directory", str(settings.processed_dir))
-    st.sidebar.subheader("Route what-if")
-    scenario = st.sidebar.selectbox(
-        "Hazard scenario", ROUTE_SCENARIOS, key="route_scenario",
-        help="As generated uses the loaded alerts. Close inner lane adds a synthetic "
-             "severity-5 closure at the inner-lane chokepoint.",
-    )
-    threshold = st.sidebar.slider("Route risk threshold", 0.0, 1.0, settings.route_risk_threshold,
-                                  0.05, key="route_threshold",
-                                  help="Lanes with risk above this are closed to the alternative.")
-    penalty = st.sidebar.number_input("Route risk penalty", min_value=0.0,
-                                      value=settings.route_risk_penalty, key="route_penalty",
-                                      help="Hours added per unit of lane risk when ranking routes.")
-    st.sidebar.subheader("Map layers")
-    layers = {name: st.sidebar.checkbox(label, value=True, key=f"layer_{name}")
-              for name, label in MAP_LAYERS}
-    data = load_dashboard_data(input_dir=input_dir, processed_dir=processed_dir)
-    summary = dashboard_summary(data, resolution=settings.resolution)
-
-    at_time = summary["latest_event_time"]
-    alerts = active_alerts(data["weather_alerts"], at_time) if at_time else []
-    positions = latest_positions(data["telemetry"])
-    latest_risk = latest_risk_by_vessel(data["risk_events"])
-    exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
-
-    _render_kpis(st, alerts=alerts, exposed=exposed, positions=positions, data=data, latest=at_time)
-    if not summary["has_data"]:
-        st.warning("No current data is available. Start the Phase 2 replay first.")
-
-    route_time = max((row["event_time"] for row in data["telemetry"]), default=at_time)
-    scenario_alerts = (route_scenario_alerts(scenario, data["weather_alerts"], route_time)
-                       if route_time else [])
-    map_alerts = active_alerts(scenario_alerts, route_time) if route_time else []
-    try:
-        route = dashboard_route(data, resolution=settings.resolution,
-                                coverage_mode=settings.coverage_mode,
-                                risk_threshold=threshold, risk_penalty=penalty,
-                                alerts=scenario_alerts)
-        route_error = None
-    except ValueError as exc:
-        route, route_error = None, str(exc)
-
-    map_column, inspect_column = st.columns([2.6, 1], gap="medium")
-    risk_tab, route_tab, density_tab, delay_tab = st.tabs(
-        ["Risk", "Route", "Corridor density", "Delay"])
-    with delay_tab:
-        _render_delay_panel(st, load_delay_estimates(processed_dir))
-    with risk_tab:
-        _render_risk_panel(st, data["risk_events"], settings)
-    with route_tab:
-        _render_route_panel(st, route, route_error, scenario)
-    with density_tab:
-        window = _render_density_panel(st, data["density_metrics"], settings)
-    density_rows = density_for_window(data["density_metrics"], window) if window else []
-    with map_column:
-        _render_map(st, layers, positions=positions, exposed=exposed, alerts=map_alerts,
-                    risk_events=data["risk_events"], density_rows=density_rows, route=route)
-        if scenario != ROUTE_SCENARIOS[0]:
-            st.caption(f"Route what-if “{scenario}” is active: hazard zones and routes on the "
-                       "map reflect the scenario, not the loaded alerts.")
-    with inspect_column:
-        with st.container(height=640, border=True):
-            _render_inspector(st, positions, latest_risk, map_alerts, route_time, settings)
+    controls = _sidebar_controls(st, settings)
+    if controls["auto_refresh"]:
+        st.fragment(run_every=10)(_render_body)(st, settings, controls)
+    else:
+        _render_body(st, settings, controls)
 
 
 if __name__ == "__main__":

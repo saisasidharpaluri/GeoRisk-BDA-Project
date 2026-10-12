@@ -1,0 +1,31 @@
+# GeoRisk dashboard theme: nautical-chart palette shared with map_layers.py.
+# `georisk dashboard` applies it through STREAMLIT_THEME_BASE.
+[theme]
+base = "light"
+primaryColor = "#1D5C80"
+backgroundColor = "#F2F5F4"
+secondaryBackgroundColor = "#E3ECEE"
+textColor = "#14232E"
+borderColor = "#C9D6DA"
+linkColor = "#1D5C80"
+redColor = "#C2410C"
+orangeColor = "#B7791F"
+greenColor = "#0E7C66"
+blueColor = "#1D5C80"
+violetColor = "#A8166F"
+font = "Public Sans:https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Archivo:https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&display=swap, sans-serif"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap, monospace"
+headingFontWeights = [800, 700, 650, 600, 600, 600]
+baseRadius = "small"
+showWidgetBorder = true
+metricValueFontSize = "1.9rem"
+dataframeHeaderBackgroundColor = "#E3ECEE"
+chartCategoricalColors = ["#1D5C80", "#A8166F", "#0E7C66", "#B7791F", "#5B6B78"]
+
+[theme.sidebar]
+backgroundColor = "#14232E"
+secondaryBackgroundColor = "#1F3442"
+textColor = "#E6EEF0"
+borderColor = "#2E4757"
+primaryColor = "#7FC4DC"
