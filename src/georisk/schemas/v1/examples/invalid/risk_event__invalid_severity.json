@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "event_time": "2026-01-01T12:00:00+00:00",
+  "vessel_id": "vessel-1",
+  "h3_index": "87754e649ffffff",
+  "h3_resolution": 7,
+  "risk_alert": true,
+  "matching_hazards": [
+    {
+      "alert_id": "alert-1",
+      "severity": 6
+    }
+  ],
+  "event_id": "telemetry-1",
+  "latitude": 12.5,
+  "longitude": 78.25,
+  "coverage_mode": "center"
+}

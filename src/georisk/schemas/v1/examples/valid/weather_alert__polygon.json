@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "event_id": "alert-event-1",
+  "alert_id": "alert-1",
+  "event_time": "2026-01-01T12:00:00+00:00",
+  "valid_from": "2026-01-01T12:00:00+00:00",
+  "valid_until": "2026-01-01T14:00:00+00:00",
+  "hazard_type": "high_waves",
+  "severity": 4,
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          78.0,
+          12.0
+        ],
+        [
+          79.0,
+          12.0
+        ],
+        [
+          79.0,
+          13.0
+        ],
+        [
+          78.0,
+          12.0
+        ]
+      ]
+    ]
+  }
+}

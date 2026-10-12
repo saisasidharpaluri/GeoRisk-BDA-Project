@@ -12,6 +12,9 @@ GeoJSON longitude/latitude order and must contain at least one ring.
 Validation reuses one cached validator per contract. The public `load_schema()`
 helper remains uncached and returns a freshly loaded schema on each call.
 
+Validated examples and documented rejection cases are in
+[v1/examples/README.md](v1/examples/README.md).
+
 ## v1 changelog
 
 - 2026-10: additive optional fields on risk_event (no version bump): event_id,
