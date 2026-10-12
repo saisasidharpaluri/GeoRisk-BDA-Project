@@ -64,3 +64,11 @@ validity), severity distribution, risk filters, density windows and adjacent
 window comparison, latest positions, delay summaries, route what-if alert sets,
 lane status, and run freshness. `GEORISK_STALE_AFTER_MINUTES` (default 30)
 sets when the last processing run is shown as stale.
+
+`map_layers.py` builds the PyDeck layers without Streamlit: latest vessel
+positions (red when inside an active hazard), hazard polygons in GeoJSON
+lon/lat order, alerted H3 risk cells, extruded corridor density (200 m per
+unique vessel), baseline and alternative routes, and labelled port/waypoint
+markers. `build_deck()` frames `DEMO_BBOX` on a Carto basemap (no token) with a
+shared tooltip. Colours follow nautical-chart convention: magenta hazards,
+navy traffic, green safe passage.

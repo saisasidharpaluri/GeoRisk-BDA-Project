@@ -3,4 +3,5 @@ jsonschema==4.26.0
 pyarrow==21.0.0
 pytest==8.4.2
 streamlit==1.65.0
+pydeck==0.9.3
 duckdb==1.5.6
