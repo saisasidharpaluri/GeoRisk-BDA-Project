@@ -58,14 +58,15 @@ def _matrix(records: list[Mapping[str, Any]]) -> list[list[float]]:
     return [[1.0] + [float(record[name]) for name in FEATURES] for record in records]
 
 
-def _validate_rows(records: list[Mapping[str, Any]]) -> None:
+def _validate_rows(records: list[Mapping[str, Any]], *, require_label: bool = True) -> None:
     if not records:
         raise ValueError("training and evaluation data cannot be empty")
     for record in records:
-        missing = [name for name in (*FEATURES, LABEL) if name not in record]
+        fields = (*FEATURES, LABEL) if require_label else FEATURES
+        missing = [name for name in fields if name not in record]
         if missing:
             raise ValueError(f"record is missing required fields: {', '.join(missing)}")
-        values = [float(record[name]) for name in (*FEATURES, LABEL)]
+        values = [float(record[name]) for name in fields]
         if not all(math.isfinite(value) for value in values):
             raise ValueError("features and labels must be finite numbers")
 
@@ -101,8 +102,20 @@ def _solve_ridge(matrix: list[list[float]], labels: list[float], penalty: float 
     return vector
 
 
-def _predict(records: list[Mapping[str, Any]], coefficients: list[float]) -> list[float]:
-    return [sum(a * b for a, b in zip(row, coefficients)) for row in _matrix(records)]
+def predict(
+    coefficients: Iterable[float], rows: Iterable[Mapping[str, Any]],
+) -> list[float]:
+    """Predict from an intercept followed by FEATURES coefficients; labels are optional."""
+    weights = [float(value) for value in coefficients]
+    if len(weights) != len(FEATURES) + 1:
+        raise ValueError(f"coefficients must contain an intercept and {len(FEATURES)} weights")
+    if not all(math.isfinite(value) for value in weights):
+        raise ValueError("coefficients must be finite numbers")
+    records = list(rows)
+    if not records:
+        return []
+    _validate_rows(records, require_label=False)
+    return [sum(a * b for a, b in zip(row, weights)) for row in _matrix(records)]
 
 
 def _metrics(actual: list[float], predicted: list[float]) -> dict[str, float]:
@@ -113,14 +126,16 @@ def _metrics(actual: list[float], predicted: list[float]) -> dict[str, float]:
     }
 
 
-def train_and_evaluate(training_data, evaluation_data) -> dict[str, Any]:
+def train_and_evaluate(
+    training_data: Iterable[Mapping[str, Any]], evaluation_data: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
     """Fit a regression model and compare it with a training-mean baseline."""
     training = [dict(row) for row in training_data]
     evaluation = [dict(row) for row in evaluation_data]
     _validate_rows(training)
     _validate_rows(evaluation)
     coefficients = _solve_ridge(_matrix(training), [float(row[LABEL]) for row in training])
-    predictions = _predict(evaluation, coefficients)
+    predictions = predict(coefficients, evaluation)
     actual = [float(row[LABEL]) for row in evaluation]
     mean_prediction = sum(float(row[LABEL]) for row in training) / len(training)
     baseline_predictions = [mean_prediction] * len(evaluation)

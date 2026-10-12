@@ -17,6 +17,9 @@ Validated examples and documented rejection cases are in
 
 ## v1 changelog
 
+- 2026-10 (S33): new `delay_estimate` contract for per-event linear-model
+  predictions, training-mean baselines, synthetic labels, feature values, and
+  train/evaluation membership. Existing event contracts are unchanged.
 - 2026-10: additive optional fields on risk_event (no version bump): event_id,
   latitude, longitude, and coverage_mode (center or overlap). Hazard matches
   require alert_id and severity (1–5); only documented match fields are accepted.

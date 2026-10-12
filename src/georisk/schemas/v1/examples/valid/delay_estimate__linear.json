@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "event_id": "telemetry-1",
+  "event_time": "2026-01-01T12:00:00Z",
+  "vessel_id": "vessel-1",
+  "split": "evaluation",
+  "model_name": "linear",
+  "predicted_delay_hours": 1.2,
+  "baseline_delay_hours": 0.8,
+  "synthetic_label_hours": 1.3,
+  "baseline_hours": 4.0,
+  "density": 2,
+  "hazard_severity": 2,
+  "speed_knots": 12.0,
+  "route_distance_nm": 48.0
+}

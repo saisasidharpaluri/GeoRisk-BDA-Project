@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = 1
 SUPPORTED_CONTRACTS = frozenset(
-    {"vessel_telemetry", "weather_alert", "risk_event", "density_metric"}
+    {"vessel_telemetry", "weather_alert", "risk_event", "density_metric", "delay_estimate"}
 )
 FORMAT_CHECKER = FormatChecker()
 

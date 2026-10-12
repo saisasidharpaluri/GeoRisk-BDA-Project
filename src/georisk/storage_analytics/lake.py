@@ -23,6 +23,7 @@ CONTRACT_BY_DATASET = {
     "weather_alerts": "weather_alert",
     "risk_events": "risk_event",
     "density_metrics": "density_metric",
+    "delay_estimates": "delay_estimate",
 }
 
 ZONE_BY_DATASET = {
@@ -30,6 +31,7 @@ ZONE_BY_DATASET = {
     "weather_alerts": "raw",
     "risk_events": "curated",
     "density_metrics": "curated",
+    "delay_estimates": "curated",
 }
 
 
@@ -54,6 +56,8 @@ def _dataset_name(records: list[Mapping[str, Any]], explicit: str | None) -> str
     if not records:
         raise ValueError("records cannot be empty when dataset_name is omitted")
     keys = set(records[0])
+    if {"predicted_delay_hours", "model_name", "split"} <= keys:
+        return "delay_estimates"
     if {"matching_hazards", "risk_alert"} <= keys:
         return "risk_events"
     if {"window_start", "unique_vessel_count"} <= keys:

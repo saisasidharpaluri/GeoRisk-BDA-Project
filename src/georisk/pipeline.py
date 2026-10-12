@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from georisk.config import GeoRiskConfig
+from georisk.contracts import SCHEMA_VERSION
 from georisk.geo_demo import DEMO_NODES
 from georisk.logging_utils import configure_logging
 from georisk.ingestion.generator import write_jsonl
@@ -21,7 +22,7 @@ from georisk.route_dashboard.route_optimizer import (
 )
 from georisk.route_dashboard.edge_risk import score_graph
 from georisk.storage_analytics.delay_features import build_delay_rows
-from georisk.storage_analytics.delay_model import split_by_time, train_and_evaluate
+from georisk.storage_analytics.delay_model import FEATURES, predict, split_by_time, train_and_evaluate
 from georisk.storage_analytics.lake import density_summary, risk_summary, write_partitioned
 from georisk.operations import acceptance_checks, artifact_manifest
 
@@ -74,6 +75,35 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         raise ValueError("end-to-end run requires at least two telemetry-derived model rows")
     training, evaluation = split_by_time(delay_rows, settings.evaluation_fraction)
     model = train_and_evaluate(training, evaluation)
+    all_rows = training + evaluation
+    predictions = predict(model["coefficients"], all_rows)
+    baseline_delay = model["baseline_predictions"][0]
+    estimates = [
+        {
+            "schema_version": SCHEMA_VERSION,
+            "event_id": row["event_id"], "event_time": row["event_time"],
+            "vessel_id": row["vessel_id"],
+            "split": "train" if index < len(training) else "evaluation",
+            "model_name": "linear",
+            "predicted_delay_hours": prediction,
+            "baseline_delay_hours": baseline_delay,
+            "synthetic_label_hours": row["delay_hours"],
+            **{feature: row[feature] for feature in FEATURES},
+        }
+        for index, (row, prediction) in enumerate(zip(all_rows, predictions))
+    ]
+    lake_paths["delay_estimates"] = write_partitioned(
+        estimates, settings.lake_dir, dataset_name="delay_estimates",
+    )
+    estimates_path = settings.processed_dir / "delay-estimates.jsonl"
+    estimates_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in estimates), encoding="utf-8",
+    )
+    model_path = settings.processed_dir / "delay-model.json"
+    model_path.write_text(json.dumps({
+        "model_name": "linear", "features": model["features"],
+        "coefficients": model["coefficients"],
+    }, indent=2, sort_keys=True), encoding="utf-8")
     logger.info("Model evaluated", extra={"georisk": {
         "evaluation_count": model["evaluation_count"],
         "model_metrics": model["model_metrics"], "baseline_metrics": model["baseline_metrics"],
@@ -101,6 +131,8 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             settings.input_dir / "weather-alerts.jsonl",
             settings.processed_dir / "risk-events.jsonl",
             settings.processed_dir / "density-metrics.jsonl",
+            estimates_path,
+            model_path,
             *(path for paths in lake_paths.values() for path in paths),
         ]
     )

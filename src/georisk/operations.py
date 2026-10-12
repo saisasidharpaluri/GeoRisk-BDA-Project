@@ -72,7 +72,9 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
         "risk and density outputs are non-empty",
     )
     lake_paths = lake.get("paths", {})
-    required_datasets = {"vessel_telemetry", "weather_alerts", "risk_events", "density_metrics"}
+    required_datasets = {
+        "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates",
+    }
     check(
         "parquet_outputs",
         required_datasets <= lake_paths.keys()

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from importlib.resources import files
 
+from georisk.contracts import SUPPORTED_CONTRACTS
+
 
 def test_schemas_are_package_resources():
-    for name in ("vessel_telemetry", "weather_alert", "risk_event", "density_metric"):
+    for name in SUPPORTED_CONTRACTS:
         path = files("georisk") / "schemas" / "v1" / f"{name}.schema.json"
         assert path.is_file()
 

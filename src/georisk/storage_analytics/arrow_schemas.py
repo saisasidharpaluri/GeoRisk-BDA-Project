@@ -8,6 +8,15 @@ from typing import Any, Iterable, Mapping
 import pyarrow as pa
 
 ARROW_SCHEMAS: dict[str, pa.Schema] = {
+    "delay_estimates": pa.schema([
+        ("schema_version", pa.int32()), ("event_id", pa.string()),
+        ("event_time", pa.string()), ("vessel_id", pa.string()),
+        ("split", pa.string()), ("model_name", pa.string()),
+        ("predicted_delay_hours", pa.float64()), ("baseline_delay_hours", pa.float64()),
+        ("synthetic_label_hours", pa.float64()), ("baseline_hours", pa.float64()),
+        ("density", pa.int64()), ("hazard_severity", pa.int32()),
+        ("speed_knots", pa.float64()), ("route_distance_nm", pa.float64()),
+    ]),
     "vessel_telemetry": pa.schema([
         ("schema_version", pa.int32()), ("event_id", pa.string()),
         ("event_time", pa.string()), ("vessel_id", pa.string()),

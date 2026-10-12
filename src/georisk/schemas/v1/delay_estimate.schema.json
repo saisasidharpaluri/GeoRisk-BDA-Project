@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://georisk-spark.example/schemas/v1/delay-estimate.schema.json",
+  "title": "GeoRisk delay estimate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "event_time", "vessel_id", "split", "model_name",
+    "predicted_delay_hours", "baseline_delay_hours", "synthetic_label_hours",
+    "baseline_hours", "density", "hazard_severity", "speed_knots", "route_distance_nm"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_id": {"type": "string", "minLength": 1},
+    "event_time": {"type": "string", "format": "date-time"},
+    "vessel_id": {"type": "string", "minLength": 1},
+    "split": {"enum": ["train", "evaluation"]},
+    "model_name": {"type": "string", "minLength": 1},
+    "predicted_delay_hours": {"type": "number"},
+    "baseline_delay_hours": {"type": "number", "minimum": 0},
+    "synthetic_label_hours": {"type": "number", "minimum": 0},
+    "baseline_hours": {"type": "number", "minimum": 0},
+    "density": {"type": "integer", "minimum": 0},
+    "hazard_severity": {"type": "integer", "minimum": 0, "maximum": 5},
+    "speed_knots": {"type": "number", "minimum": 1, "maximum": 60},
+    "route_distance_nm": {"type": "number", "minimum": 0}
+  }
+}

@@ -14,7 +14,7 @@ Partition by event date; keep H3 IDs as queryable columns rather than high-cardi
 `lake.write_partitioned(records, root, dataset_name=..., batch_id="00000")`
 validates the complete batch and writes Parquet under
 `<root>/<zone>/<dataset>/event_date=YYYY-MM-DD/part-<batch_id>.parquet`.
-Telemetry and weather alerts use the `raw` zone; risk events and density metrics
+Telemetry and weather alerts use the `raw` zone; risk events, density metrics, and delay estimates
 use `curated`. Each row is partitioned by its own UTC `event_time` date, or
 `window_start` for density. Empty batches return an empty list without files.
 Replaying the same batch replaces its file in each affected partition; other
@@ -23,9 +23,9 @@ batch IDs and dates remain untouched. Use a different batch ID to append data.
 `write_dataset()` remains available for callers supplying an explicit date.
 Both writers support the same zone layout for `s3://` destinations when `boto3`
 is available. `read_dataset()`, `risk_summary()`, and `density_summary()` read
-the local zone paths. The pipeline writes all four datasets and reports a list
+the local zone paths. The pipeline writes all five datasets and reports a list
 of paths per dataset in `lake.paths`, including every file in its manifest.
-Acceptance requires all four datasets and every listed file to exist.
+Acceptance requires all five datasets and every listed file to exist.
 
 `delay_model.py` documents the synthetic label formula in
 `make_synthetic_label()`, performs a time-ordered split, fits a regularized
@@ -50,6 +50,20 @@ The seed and input order reproduce the labels. The later 20% of rows are held
 out by default. The comparison baseline predicts the training-label mean;
 it is distinct from the distance/speed feature. These are synthetic
 demonstration metrics, not evidence of real-world forecasting accuracy.
+
+Each run saves every training and evaluation row to
+`processed/delay-estimates.jsonl` and `curated/delay_estimates/` in the lake,
+validated against the `delay_estimate` contract. Rows include the five features,
+event identity/time, split (`train` or `evaluation`), `model_name`, predicted
+delay, training-mean baseline delay, and synthetic label (all delays in hours).
+Predictions are the raw linear output and can be negative; labels are clamped
+at zero. Only evaluation rows contribute to the reported MAE/RMSE.
+
+`processed/delay-model.json` stores `model_name: "linear"`, the ordered
+`features`, and `coefficients` (intercept first, followed by one weight per
+feature). Load the JSON and call `delay_model.predict(model["coefficients"],
+rows)` to reproduce predictions; rows need features but no labels. Both JSON
+artifacts and the delay Parquet files are included in the run manifest.
 
 ## Handoff
 

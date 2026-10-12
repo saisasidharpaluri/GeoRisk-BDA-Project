@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from georisk.contracts import load_schema
+from georisk.contracts import ContractValidationError, load_schema, validate_event
 from georisk.config import GeoRiskConfig
 from georisk.geo_demo import DEMO_NODES, haversine_nm
 from georisk.ingestion.generator import generate_events
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.processing.stream_job import process_events
+from georisk.pipeline import run_end_to_end
 from georisk.storage_analytics.delay_features import build_delay_rows
 from georisk.storage_analytics.arrow_schemas import ARROW_SCHEMAS
 from georisk.storage_analytics.lake import CONTRACT_BY_DATASET
@@ -18,6 +20,7 @@ from georisk.storage_analytics.lake import CONTRACT_BY_DATASET
 from georisk.storage_analytics.delay_model import (
     FEATURES,
     make_synthetic_label,
+    predict,
     split_by_time,
     train_and_evaluate,
 )
@@ -66,6 +69,18 @@ def _delay_row(index: int) -> dict:
     return row
 
 
+def _delay_estimate(index: int) -> dict:
+    row = _delay_row(index)
+    return {
+        "schema_version": 1, "event_id": f"event-{index}",
+        "vessel_id": f"vessel-{index}", "event_time": row["event_time"],
+        "split": "evaluation", "model_name": "linear",
+        "predicted_delay_hours": row["delay_hours"],
+        "baseline_delay_hours": 1.0, "synthetic_label_hours": row["delay_hours"],
+        **{feature: row[feature] for feature in FEATURES},
+    }
+
+
 def test_write_and_read_risk_parquet_with_date_partition(tmp_path):
     output = write_dataset(
         [_risk(0), _risk(1, alerted=False)],
@@ -102,6 +117,7 @@ def test_batch_spanning_midnight_creates_two_partitions(tmp_path, dataset):
         "weather_alerts": events["weather_alerts"][:2],
         "risk_events": [_risk(0), _risk(1)],
         "density_metrics": [_density(0), _density(1)],
+        "delay_estimates": [_delay_estimate(0), _delay_estimate(1)],
     }[dataset]
     timestamp_field = "window_start" if dataset == "density_metrics" else "event_time"
     for record, timestamp in zip(records, ["2026-01-01T23:50:00Z", "2026-01-02T00:00:00Z"]):
@@ -171,6 +187,7 @@ def test_raw_and_curated_zones(tmp_path):
         ("weather_alerts", events["weather_alerts"], "raw"),
         ("risk_events", [_risk(0)], "curated"),
         ("density_metrics", [_density(0)], "curated"),
+        ("delay_estimates", [_delay_estimate(0)], "curated"),
     ]:
         paths = write_partitioned(records, tmp_path, dataset_name=dataset)
         assert len(paths) == 1
@@ -326,6 +343,92 @@ def test_delay_noise_setting_from_env():
     assert GeoRiskConfig.from_env({}).delay_noise_std_hours == 0.25
     assert GeoRiskConfig.from_env({"GEORISK_DELAY_NOISE_STD_HOURS": "0.5"}).delay_noise_std_hours == 0.5
     assert GeoRiskConfig.from_env({"GEORISK_DELAY_NOISE_STD_HOURS": "0"}).delay_noise_std_hours == 0
+
+
+def test_predict_matches_train_and_evaluate_predictions():
+    training, evaluation = split_by_time([_delay_row(i) for i in range(30)])
+    model = train_and_evaluate(training, evaluation)
+    features_only = [{feature: row[feature] for feature in FEATURES} for row in evaluation]
+    assert predict(model["coefficients"], iter(features_only)) == model["predictions"]
+    assert predict(model["coefficients"], []) == []
+
+
+def test_predict_rejects_invalid_coefficients_and_features():
+    with pytest.raises(ValueError, match="intercept"):
+        predict([0.0], [_delay_row(0)])
+    with pytest.raises(ValueError, match="finite"):
+        predict([float("nan")] * 6, [_delay_row(0)])
+    with pytest.raises(ValueError, match="speed_knots"):
+        predict([0.0] * 6, [{}])
+    with pytest.raises(ValueError, match="finite"):
+        predict([0.0] * 6, [dict(_delay_row(0), density=float("inf"))])
+
+
+def test_delay_estimates_written_and_valid(tmp_path):
+    config = GeoRiskConfig(
+        input_dir=tmp_path / "data", processed_dir=tmp_path / "processed",
+        lake_dir=tmp_path / "lake", dashboard_dir=tmp_path,
+        report_path=tmp_path / "report.json",
+    )
+    report = run_end_to_end(config)
+    estimates_path = config.processed_dir / "delay-estimates.jsonl"
+    model_path = config.processed_dir / "delay-model.json"
+    estimates = [json.loads(line) for line in estimates_path.read_text().splitlines()]
+    model = json.loads(model_path.read_text())
+    assert len(estimates) == report["processing"]["risk_event_count"]
+    assert len({row["event_id"] for row in estimates}) == len(estimates)
+    for row in estimates:
+        validate_event("delay_estimate", row)
+    assert model["model_name"] == "linear"
+    assert model["features"] == list(FEATURES)
+    assert len(model["coefficients"]) == len(FEATURES) + 1
+    assert predict(model["coefficients"], estimates) == [
+        row["predicted_delay_hours"] for row in estimates
+    ]
+    training = [row for row in estimates if row["split"] == "train"]
+    evaluation = [row for row in estimates if row["split"] == "evaluation"]
+    assert len(evaluation) == report["model"]["evaluation_count"]
+    assert max(row["event_time"] for row in training) <= min(row["event_time"] for row in evaluation)
+    assert {row["event_id"] for row in training}.isdisjoint(row["event_id"] for row in evaluation)
+    mean_label = sum(row["synthetic_label_hours"] for row in training) / len(training)
+    assert all(row["baseline_delay_hours"] == mean_label for row in estimates)
+    for name, field in (("model", "predicted_delay_hours"), ("baseline", "baseline_delay_hours")):
+        errors = [row[field] - row["synthetic_label_hours"] for row in evaluation]
+        assert report["model"][f"{name}_metrics"]["mae"] == pytest.approx(
+            sum(abs(error) for error in errors) / len(errors)
+        )
+        assert report["model"][f"{name}_metrics"]["rmse"] == pytest.approx(
+            (sum(error ** 2 for error in errors) / len(errors)) ** 0.5
+        )
+    stored = read_dataset(config.lake_dir, "delay_estimates")
+    assert {row["event_id"]: {k: v for k, v in row.items() if k != "event_date"}
+            for row in stored} == {row["event_id"]: row for row in estimates}
+    paths = report["lake"]["paths"]["delay_estimates"]
+    assert all("curated/delay_estimates/" in Path(path).as_posix() for path in paths)
+    assert {str(estimates_path), str(model_path), *paths} <= {
+        entry["path"] for entry in report["artifacts"]
+    }
+    assert report["config"]["delay_noise_std_hours"] == 0.25
+    assert report["model"]["model_metrics"]["mae"] > 0.01
+    assert report["acceptance"]["passed"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("split", "test"), ("event_id", ""), ("schema_version", 2),
+    ("synthetic_label_hours", -1), ("density", -1), ("hazard_severity", 6),
+    ("event_time", "2026-01-01T12:00:00+05:30"),
+])
+def test_delay_estimate_contract_rejects_invalid_values(field, value):
+    with pytest.raises(ContractValidationError):
+        validate_event("delay_estimate", dict(_delay_estimate(0), **{field: value}))
+
+
+@pytest.mark.parametrize("field", load_schema("delay_estimate")["required"])
+def test_delay_estimate_contract_requires_fields(field):
+    row = _delay_estimate(0)
+    del row[field]
+    with pytest.raises(ContractValidationError, match=field):
+        validate_event("delay_estimate", row)
 
 
 def test_mixed_polygon_and_multipolygon_alerts_round_trip(tmp_path):

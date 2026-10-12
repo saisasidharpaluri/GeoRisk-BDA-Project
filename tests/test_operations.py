@@ -64,9 +64,9 @@ def test_phase7_pipeline_report_is_accepted(tmp_path):
     assert len({row["window_start"] for row in density}) > 1
     assert report["route"]["route_changed"] is True
     assert report["route"]["baseline_blocked_edges"]
-    assert len(report["artifacts"]) == 8
+    assert len(report["artifacts"]) == 11
     assert set(report["lake"]["paths"]) == {
-        "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics",
+        "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates",
     }
     parquet_paths = [path for paths in report["lake"]["paths"].values() for path in paths]
     assert set(parquet_paths) == {str(path) for path in config.lake_dir.rglob("*.parquet")}
@@ -77,11 +77,11 @@ def test_phase7_pipeline_report_is_accepted(tmp_path):
 
 
 @pytest.mark.parametrize("missing_dataset", [
-    "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics",
+    "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates",
 ])
 def test_parquet_acceptance_checks_every_partition(tmp_path, missing_dataset):
     paths = {}
-    for dataset in ["vessel_telemetry", "weather_alerts", "risk_events", "density_metrics"]:
+    for dataset in ["vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates"]:
         paths[dataset] = []
         for index in range(2):
             path = tmp_path / f"{dataset}-{index}.parquet"
