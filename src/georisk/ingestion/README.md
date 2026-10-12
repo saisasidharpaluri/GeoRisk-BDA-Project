@@ -2,6 +2,9 @@
 
 Own synthetic event generation, repeatable replay, validation, and publishing to two Amazon Kinesis Data Streams: `vessel-telemetry` and `weather-alerts`.
 
+The demo geography is offshore Chennai in the Bay of Bengal. Shared coordinates,
+lane paths, nautical-mile distances, and bearings live in `georisk.geo_demo`.
+
 ## Starter modules
 
 - `generator.py`: deterministic telemetry and alert generation.

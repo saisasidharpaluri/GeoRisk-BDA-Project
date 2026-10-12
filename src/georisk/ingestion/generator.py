@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
+from georisk.geo_demo import DEMO_NODES
 
 UTC = timezone.utc
 DEFAULT_START_TIME = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -54,8 +55,8 @@ def _polygon(center_latitude: float, center_longitude: float, size: float) -> di
 def _weather_alert(
     rng: random.Random, index: int, start_time: datetime
 ) -> Event:
-    center_latitude = 12.0 + rng.uniform(-0.15, 0.15)
-    center_longitude = 78.0 + rng.uniform(-0.15, 0.15)
+    center_latitude = DEMO_NODES["chokepoint"][0] + rng.uniform(-0.15, 0.15)
+    center_longitude = DEMO_NODES["chokepoint"][1] + rng.uniform(-0.15, 0.15)
     valid_from = start_time - timedelta(minutes=5)
     valid_until = start_time + timedelta(minutes=40)
     event_time = valid_from
@@ -107,8 +108,8 @@ def generate_events(
     telemetry: list[Event] = []
 
     for vessel_index in range(vessel_count):
-        latitude = 12.0 + rng.uniform(-0.5, 0.5)
-        longitude = 78.0 + rng.uniform(-0.5, 0.5)
+        latitude = DEMO_NODES["chokepoint"][0] + rng.uniform(-0.5, 0.5)
+        longitude = DEMO_NODES["chokepoint"][1] + rng.uniform(-0.5, 0.5)
         speed = rng.uniform(8.0, 22.0)
         heading = rng.uniform(0.0, 359.999)
         for point_index in range(telemetry_points):
