@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
-from georisk.processing.h3_index import DEFAULT_RESOLUTION, point_to_cell, polygon_to_cells
+from georisk.processing.h3_index import (
+    COVERAGE_MODES, DEFAULT_COVERAGE_MODE, DEFAULT_RESOLUTION,
+    _validate_resolution, point_to_cell, polygon_to_cells,
+)
 
 UTC = timezone.utc
 WINDOW_MINUTES = 15
-COVERAGE_MODE = "center"
 
 
 def _parse_utc(value: str) -> datetime:
@@ -67,10 +69,14 @@ def process_events(
     *,
     resolution: int = DEFAULT_RESOLUTION,
     strict: bool = False,
+    coverage_mode: str = DEFAULT_COVERAGE_MODE,
 ) -> dict[str, Any]:
     """Create risk events and unique-vessel density metrics from one batch."""
     if not isinstance(strict, bool):
         raise TypeError("strict must be a boolean")
+    _validate_resolution(resolution)
+    if coverage_mode not in COVERAGE_MODES:
+        raise ValueError("coverage_mode must be center or overlap")
     quarantine = []
     stats = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
     stats["duplicates_dropped"] = 0
@@ -103,7 +109,7 @@ def process_events(
     for alert in latest_alerts.values():
         valid_from = _parse_utc(alert["valid_from"])
         valid_until = _parse_utc(alert["valid_until"])
-        for cell in polygon_to_cells(alert["geometry"], resolution):
+        for cell in polygon_to_cells(alert["geometry"], resolution, coverage_mode):
             coverage.setdefault(cell, []).append((alert, valid_from, valid_until))
 
     risk_events = []
@@ -131,7 +137,7 @@ def process_events(
                 "event_id": event["event_id"],
                 "latitude": event["latitude"],
                 "longitude": event["longitude"],
-                "coverage_mode": COVERAGE_MODE,
+                "coverage_mode": coverage_mode,
                 "event_time": event["event_time"],
                 "vessel_id": event["vessel_id"],
                 "h3_index": cell,
@@ -239,7 +245,10 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
         alerts = _read_jsonl(
             directory / "weather-alerts.jsonl", "weather_alert", quarantine, strict=strict
         )
-    results = process_events(telemetry, alerts, resolution=resolution, strict=strict)
+    results = process_events(
+        telemetry, alerts, resolution=resolution, strict=strict,
+        coverage_mode=config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
+    )
     for entry in quarantine:
         key = "telemetry_in" if entry["contract"] == "vessel_telemetry" else "alerts_in"
         results["stats"][key] += 1

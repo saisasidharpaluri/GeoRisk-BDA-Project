@@ -10,6 +10,8 @@ import h3
 DEFAULT_RESOLUTION = 7
 MIN_RESOLUTION = 0
 MAX_RESOLUTION = 15
+COVERAGE_MODES = ("center", "overlap")
+DEFAULT_COVERAGE_MODE = "overlap"
 
 
 def _validate_resolution(resolution: int) -> None:
@@ -41,15 +43,20 @@ def _validate_geometry(geojson_geometry: Mapping[str, Any]) -> None:
         raise ValueError("geometry coordinates must be a non-empty list")
 
 
-def polygon_to_cells(geojson_geometry: dict, resolution: int) -> set[str]:
-    """Return H3 cells covering a GeoJSON Polygon or MultiPolygon.
-
-    H3 uses cell-center containment by default. The returned set is therefore
-    a candidate cover and is not an exact polygon intersection result.
-    """
+def polygon_to_cells(
+    geojson_geometry: dict, resolution: int,
+    coverage_mode: str = DEFAULT_COVERAGE_MODE,
+) -> set[str]:
+    """Return candidate cells using center containment or polygon overlap."""
     _validate_resolution(resolution)
+    if coverage_mode not in COVERAGE_MODES:
+        raise ValueError("coverage_mode must be center or overlap")
     _validate_geometry(geojson_geometry)
     try:
-        return set(h3.geo_to_cells(geojson_geometry, resolution))
-    except (TypeError, ValueError) as exc:
+        if coverage_mode == "center":
+            return set(h3.geo_to_cells(geojson_geometry, resolution))
+        return set(h3.h3shape_to_cells_experimental(
+            h3.geo_to_h3shape(geojson_geometry), resolution, contain="overlap"
+        ))
+    except (TypeError, ValueError, h3.H3BaseException) as exc:
         raise ValueError(f"invalid GeoJSON geometry: {exc}") from exc

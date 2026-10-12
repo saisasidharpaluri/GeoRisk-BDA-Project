@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Real-time geospatial supply-chain risk analytics demonstration"
 requires-python = ">=3.10"
 dependencies = [
-    "h3>=4.1,<5",
+    "h3>=4.5,<5",
     "jsonschema>=4.21,<5",
     "pyarrow>=16",
 ]

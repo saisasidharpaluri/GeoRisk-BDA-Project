@@ -41,6 +41,7 @@ class GeoRiskConfig:
     vessel_count: int = 10
     telemetry_points: int = 3
     resolution: int = 7
+    coverage_mode: str = "overlap"
     input_dir: Path = Path("output/data")
     processed_dir: Path = Path("output/processed")
     lake_dir: Path = Path("output/lake")
@@ -62,6 +63,8 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if self.coverage_mode not in ("center", "overlap"):
+            raise ValueError("GEORISK_H3_COVERAGE_MODE must be center or overlap")
         if not isinstance(self.strict_validation, bool):
             raise ValueError("GEORISK_STRICT_VALIDATION must be true or false")
         if self.vessel_count < 0 or self.telemetry_points < 1:
@@ -90,6 +93,7 @@ class GeoRiskConfig:
             vessel_count=_integer(source, "GEORISK_VESSEL_COUNT", 10),
             telemetry_points=_integer(source, "GEORISK_TELEMETRY_POINTS", 3),
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),
+            coverage_mode=source.get("GEORISK_H3_COVERAGE_MODE", "overlap"),
             input_dir=Path(source.get("GEORISK_INPUT_DIR", "output/data")),
             processed_dir=Path(source.get("GEORISK_OUTPUT_DIR", "output/processed")),
             lake_dir=Path(source.get("GEORISK_LAKE_DIR", "output/lake")),

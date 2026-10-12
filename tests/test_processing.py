@@ -127,7 +127,7 @@ def test_risk_event_carries_event_id_and_coordinates():
     assert {key: risk[key] for key in ("event_id", "latitude", "longitude")} == {
         key: event[key] for key in ("event_id", "latitude", "longitude")
     }
-    assert risk["coverage_mode"] == "center"
+    assert risk["coverage_mode"] == "overlap"
 
 
 def test_invalid_record_does_not_reserve_event_id():
@@ -146,9 +146,9 @@ def test_reissued_alert_replaces_earlier_version(reverse_order, monkeypatch):
     calls = []
     original = stream_job.polygon_to_cells
 
-    def count(geometry, resolution):
+    def count(geometry, resolution, coverage_mode):
         calls.append(geometry)
-        return original(geometry, resolution)
+        return original(geometry, resolution, coverage_mode)
 
     monkeypatch.setattr(stream_job, "polygon_to_cells", count)
     result = process_events([_telemetry("vessel", 12, 78, 20)], alerts)
@@ -263,10 +263,10 @@ def test_polygon_coverage_computed_once_per_alert(monkeypatch):
     calls = 0
     original_polygon_to_cells = stream_job.polygon_to_cells
 
-    def counting_polygon_to_cells(geometry, resolution):
+    def counting_polygon_to_cells(geometry, resolution, coverage_mode):
         nonlocal calls
         calls += 1
-        return original_polygon_to_cells(geometry, resolution)
+        return original_polygon_to_cells(geometry, resolution, coverage_mode)
 
     monkeypatch.setattr(stream_job, "polygon_to_cells", counting_polygon_to_cells)
     second_alert = _alert(center_latitude=14, center_longitude=80)
@@ -346,3 +346,31 @@ def test_multipolygon_alert_matches_second_polygon():
     event = results["risk_events"][0]
     assert event["risk_alert"] is True
     assert [hazard["alert_id"] for hazard in event["matching_hazards"]] == ["alert-1"]
+
+
+def test_overlap_mode_catches_boundary_cell_missed_by_center():
+    alert = _alert()
+    center = polygon_to_cells(alert["geometry"], 7, "center")
+    overlap = polygon_to_cells(alert["geometry"], 7, "overlap")
+    boundary = [
+        _telemetry(f"boundary-{i}", 11.9005, 77.905 + i * 0.005)
+        for i in range(39)
+        if point_to_cell(11.9005, 77.905 + i * 0.005, 7) not in center
+    ]
+    assert boundary
+    assert all(point_to_cell(e["latitude"], e["longitude"], 7) in overlap for e in boundary)
+    for mode, expected in (("overlap", True), ("center", False)):
+        result = process_events(boundary, [alert], coverage_mode=mode)
+        assert all(e["risk_alert"] is expected for e in result["risk_events"])
+        assert all(e["coverage_mode"] == mode for e in result["risk_events"])
+
+
+def test_unknown_coverage_mode_rejected():
+    from georisk.config import GeoRiskConfig
+
+    with pytest.raises(ValueError, match="coverage_mode"):
+        polygon_to_cells(_alert()["geometry"], 7, "unknown")
+    with pytest.raises(ValueError, match="coverage_mode"):
+        process_events([], [], coverage_mode="unknown")
+    with pytest.raises(ValueError, match="GEORISK_H3_COVERAGE_MODE"):
+        GeoRiskConfig.from_env({"GEORISK_H3_COVERAGE_MODE": "unknown"})

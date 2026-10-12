@@ -21,9 +21,11 @@ Telemetry matching checks only the alerts covering its cell, applies the
 half-open validity interval (`valid_from <= event_time < valid_until`), and
 returns matching hazards sorted by `alert_id`.
 
-H3 coverage uses the library's standard cell-center containment. It is an
-explainable candidate screen, not exact polygon containment; the selected H3
-resolution is retained on every output.
+H3 coverage defaults to `overlap` (GEORISK_H3_COVERAGE_MODE). It includes
+boundary cells missed by `center`, but can flag vessels just outside the
+polygon. Both modes are candidate screens, not exact point containment.
+Set the mode to `center` for cell-center containment. The mode and resolution
+are retained on every risk output and in the pipeline report.
 
 ## Handoff
 
@@ -31,6 +33,6 @@ Consume Member 1's event schemas and publish risk and density rows using `src/ge
 
 Invalid records are quarantined by default while valid records continue through the batch. Results include quarantine entries and input/quarantine statistics. The runner always writes quarantine.jsonl, including malformed JSON lines (line number and up to 1,000 raw characters); its timestamps exclude it from the reproducible artifact manifest. Set GEORISK_STRICT_VALIDATION=true (or strict=True in process_events) to raise on invalid input.
 
-Risk rows carry the source event_id, latitude, longitude, and coverage_mode (currently center). Only the first valid telemetry record per event_id is processed in each batch; later copies are counted in duplicates_dropped without quarantine or density inflation.
+Risk rows carry the source event_id, latitude, longitude, and coverage_mode. Only the first valid telemetry record per event_id is processed in each batch; later copies are counted in duplicates_dropped without quarantine or density inflation.
 
 A re-issued alert replaces the earlier version for the whole batch. Among valid alerts sharing an alert_id, the latest event_time wins; ties keep the later input record. Superseded valid versions are counted in alert_revisions_superseded, and coverage is computed only for the retained versions.

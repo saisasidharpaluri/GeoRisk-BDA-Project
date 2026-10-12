@@ -51,6 +51,7 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     )
     report = run_end_to_end(config)
 
+    assert report["config"]["coverage_mode"] == "overlap"
     assert report["status"] == "success"
     assert report["generation"]["generated"] == 20
     assert report["processing"]["risk_event_count"] == 18

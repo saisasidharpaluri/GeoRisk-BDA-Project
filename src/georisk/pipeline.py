@@ -62,6 +62,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "input_dir": settings.input_dir,
             "output_dir": settings.processed_dir,
             "resolution": settings.resolution,
+            "coverage_mode": settings.coverage_mode,
             "strict": settings.strict_validation,
         }
     )
@@ -110,6 +111,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "vessel_count": settings.vessel_count,
             "telemetry_points": settings.telemetry_points,
             "resolution": settings.resolution,
+            "coverage_mode": settings.coverage_mode,
             "event_date": event_date,
             "acceptance_required": settings.acceptance_required,
             "strict_validation": settings.strict_validation,
