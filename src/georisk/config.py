@@ -43,6 +43,8 @@ class GeoRiskConfig:
     seed: int = 7
     vessel_count: int = 10
     telemetry_points: int = 3
+    scenario_duration_minutes: int = 120
+    telemetry_interval_seconds: int = 300
     stream_dir: Path = Path("output/stream")
     replay_speed_factor: float = 0.0
     resolution: int = 7
@@ -71,6 +73,14 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        for name, value in (
+            ("GEORISK_SCENARIO_DURATION_MINUTES", self.scenario_duration_minutes),
+            ("GEORISK_TELEMETRY_INTERVAL_SECONDS", self.telemetry_interval_seconds),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if not 1 <= self.scenario_duration_minutes * 60 // self.telemetry_interval_seconds <= 1000:
+            raise ValueError("scenario duration and interval must produce 1..1000 telemetry steps")
         if not isinstance(self.stream_dir, Path):
             raise ValueError("GEORISK_STREAM_DIR must be a Path")
         if (not isinstance(self.replay_speed_factor, (int, float))
@@ -121,6 +131,8 @@ class GeoRiskConfig:
             seed=_integer(source, "GEORISK_SEED", 7),
             vessel_count=_integer(source, "GEORISK_VESSEL_COUNT", 10),
             telemetry_points=_integer(source, "GEORISK_TELEMETRY_POINTS", 3),
+            scenario_duration_minutes=_integer(source, "GEORISK_SCENARIO_DURATION_MINUTES", 120),
+            telemetry_interval_seconds=_integer(source, "GEORISK_TELEMETRY_INTERVAL_SECONDS", 300),
             stream_dir=Path(source.get("GEORISK_STREAM_DIR", "output/stream")),
             replay_speed_factor=_float(source, "GEORISK_REPLAY_SPEED_FACTOR", 0.0),
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),

@@ -11,3 +11,10 @@ workload role.
 Phase 7 adds `GEORISK_ACCEPTANCE_REQUIRED` as an explicit deployment setting.
 Keep it enabled for demonstrations so a run cannot be presented as complete
 without passing the acceptance checks.
+
+The scenario duration defaults to 120 minutes (`GEORISK_SCENARIO_DURATION_MINUTES`)
+and sampling to 300 seconds (`GEORISK_TELEMETRY_INTERVAL_SECONDS`). Both must be
+positive integers producing 1–1000 samples per vessel. `GEORISK_TELEMETRY_POINTS`
+is retained for legacy `generate_events()` callers. Local file replay uses
+`GEORISK_STREAM_DIR=output/stream` and `GEORISK_REPLAY_SPEED_FACTOR=0`; zero
+disables pacing, and positive finite values scale event-time gaps.

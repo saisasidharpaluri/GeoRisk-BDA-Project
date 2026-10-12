@@ -10,13 +10,16 @@ from typing import Any
 
 from georisk.config import GeoRiskConfig
 from georisk.logging_utils import configure_logging
-from georisk.ingestion.generator import generate_events, write_jsonl
+from georisk.ingestion.generator import write_jsonl
+from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.processing.stream_job import run_streaming_job
 from georisk.route_dashboard.dashboard import dashboard_summary, load_dashboard_data
 from georisk.route_dashboard.route_optimizer import (
     demonstration_graph,
+    demonstration_nodes,
     find_alternative_route,
 )
+from georisk.route_dashboard.edge_risk import score_graph
 from georisk.storage_analytics.delay_model import make_synthetic_label, split_by_time, train_and_evaluate
 from georisk.storage_analytics.lake import density_summary, risk_summary, write_dataset
 from georisk.operations import acceptance_checks, artifact_manifest
@@ -55,11 +58,12 @@ def _delay_rows(
 def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
     """Run generation, processing, lake writes, model evaluation, and routing."""
     settings = config or GeoRiskConfig.from_env()
-    events = generate_events(
-        settings.seed,
-        settings.vessel_count,
-        telemetry_points=settings.telemetry_points,
-    )
+    events = generate_scenario(ScenarioConfig(
+        seed=settings.seed,
+        vessel_count=settings.vessel_count,
+        duration_minutes=settings.scenario_duration_minutes,
+        interval_seconds=settings.telemetry_interval_seconds,
+    ))
     generation_stats = write_jsonl(events, settings.input_dir)
     logger.info("Generation complete", extra={"georisk": {
         "generated": generation_stats.generated, "published": generation_stats.published,
@@ -103,13 +107,21 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         "evaluation_count": model["evaluation_count"],
         "model_metrics": model["model_metrics"], "baseline_metrics": model["baseline_metrics"],
     }})
+    at_time = max(event["event_time"] for event in events["telemetry"])
+    scored_graph = score_graph(
+        demonstration_graph(), demonstration_nodes(), events["weather_alerts"],
+        processed["density_metrics"], at_time=at_time, resolution=settings.resolution,
+        coverage_mode=settings.coverage_mode,
+    )
     route = find_alternative_route(
-        demonstration_graph(),
+        scored_graph,
         "port_a",
         "port_b",
         settings.route_risk_threshold,
         risk_penalty=settings.route_risk_penalty,
     )
+    route["at_time"] = at_time
+    route["edge_scores"] = scored_graph
     logger.info("Route decision", extra={"georisk": route})
     summary = dashboard_summary(load_dashboard_data(settings.dashboard_dir))
     artifacts = artifact_manifest(
@@ -128,6 +140,8 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "seed": settings.seed,
             "vessel_count": settings.vessel_count,
             "telemetry_points": settings.telemetry_points,
+            "scenario_duration_minutes": settings.scenario_duration_minutes,
+            "telemetry_interval_seconds": settings.telemetry_interval_seconds,
             "resolution": settings.resolution,
             "coverage_mode": settings.coverage_mode,
             "window_minutes": settings.density_window_minutes,

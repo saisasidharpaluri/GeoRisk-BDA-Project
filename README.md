@@ -108,6 +108,14 @@ foundation template is
 `infra/aws/georisk-foundation.template.json`; review account, region, cost,
 and teardown settings before deployment.
 
+The local run uses an offshore Chennai scenario with timed hazards and slow
+traffic clustered at the chokepoint. `GEORISK_SCENARIO_DURATION_MINUTES=120`
+and `GEORISK_TELEMETRY_INTERVAL_SECONDS=300` produce 24 samples per configured
+vessel across eight default density windows. `GEORISK_TELEMETRY_POINTS` is
+legacy and only applies to `generate_events()`. Routing uses active hazards and
+the density window at the latest telemetry time; `route.at_time` and
+`route.edge_scores` record that decision's inputs, including per-edge reasons.
+
 ## Phase 7 acceptance and reproducibility
 
 Run the final acceptance checks against the persisted report:

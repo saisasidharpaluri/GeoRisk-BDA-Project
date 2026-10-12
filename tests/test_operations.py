@@ -56,6 +56,11 @@ def test_phase7_pipeline_report_is_accepted(tmp_path):
     )
     report = run_end_to_end(config)
     assert report["acceptance"]["status"] == "accepted"
+    assert report["lake"]["risk_summary"]["alerted_event_count"] > 0
+    density = [json.loads(line) for line in (config.processed_dir / "density-metrics.jsonl").read_text().splitlines()]
+    assert len({row["window_start"] for row in density}) > 1
+    assert report["route"]["route_changed"] is True
+    assert report["route"]["baseline_blocked_edges"]
     assert len(report["artifacts"]) == 6
     validated = validate_report(config.report_path)
     assert validated["passed"] is True

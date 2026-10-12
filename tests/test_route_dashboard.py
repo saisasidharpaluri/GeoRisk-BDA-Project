@@ -32,7 +32,7 @@ def test_explanation_names_blocked_edges():
     assert result["explanation"] == (
         "Edges above risk threshold 0.50 were unavailable: port_a→chokepoint (0.90), "
         "chokepoint→port_b (0.90). "
-        f"Alternative adds {result['travel_hour_delta']:+.1f} h and changes total risk by -1.60."
+        "Alternative adds +2.4 h and changes total risk by -1.60."
     )
 
 
