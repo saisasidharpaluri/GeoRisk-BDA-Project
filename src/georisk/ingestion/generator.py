@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
-from georisk.geo_demo import DEMO_NODES
+from georisk.geo_demo import DEMO_NODES, DEMO_PATHS, haversine_nm, initial_bearing_deg
 
 UTC = timezone.utc
 DEFAULT_START_TIME = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -73,6 +74,64 @@ def _weather_alert(
     }
 
 
+def _vessel_track(
+    rng: random.Random, vessel_index: int, points: int, interval_seconds: int,
+    start_time: datetime, *, position: tuple[float, float] | None = None,
+    speed_knots: float | None = None,
+) -> list[Event]:
+    """Move one vessel along a lane, carrying excess distance across waypoints."""
+    path = DEMO_PATHS["inner" if position is not None or vessel_index % 2 == 0 else "outer"]
+    waypoints = [DEMO_NODES[node] for node in path]
+    target_index = 1
+    if position is None:
+        lengths = [haversine_nm(*a, *b) for a, b in zip(waypoints, waypoints[1:])]
+        # Leave the short port approach outside the offshore telemetry box.
+        distance = rng.uniform(0.06, 0.95) * sum(lengths)
+        while distance > lengths[target_index - 1]:
+            distance -= lengths[target_index - 1]
+            target_index += 1
+        a, b = waypoints[target_index - 1:target_index + 1]
+        fraction = distance / lengths[target_index - 1]
+        position = (a[0] + fraction * (b[0] - a[0]), a[1] + fraction * (b[1] - a[1]))
+    latitude = position[0] + rng.uniform(-0.002, 0.002)
+    longitude = position[1] + rng.uniform(-0.002, 0.002)
+    speed = rng.uniform(8.0, 22.0) if speed_knots is None else speed_knots
+    records = []
+    for point_index in range(points):
+        if target_index < len(waypoints) - 1 and haversine_nm(
+            latitude, longitude, *waypoints[target_index]
+        ) < 1:
+            target_index += 1
+        heading = initial_bearing_deg(latitude, longitude, *waypoints[target_index])
+        event = {
+            "schema_version": SCHEMA_VERSION,
+            "event_id": f"telemetry-{vessel_index:05d}-{point_index:04d}",
+            "event_time": _utc_timestamp(start_time + timedelta(seconds=interval_seconds * point_index)),
+            "vessel_id": f"vessel-{vessel_index:05d}",
+            "latitude": round(latitude, 6), "longitude": round(longitude, 6),
+            "speed_knots": round(speed, 3), "heading_deg": round(heading, 3) % 360,
+        }
+        validate_event("vessel_telemetry", event)
+        records.append(event)
+        remaining = speed * interval_seconds / 3600
+        while remaining > 0:
+            target = waypoints[target_index]
+            distance = haversine_nm(latitude, longitude, *target)
+            if remaining >= distance:
+                latitude, longitude = target
+                remaining -= distance
+                if target_index == len(waypoints) - 1:
+                    speed = 0.0
+                    break
+                target_index += 1
+            else:
+                heading = math.radians(initial_bearing_deg(latitude, longitude, *target))
+                longitude += remaining * math.sin(heading) / (60 * math.cos(math.radians(latitude)))
+                latitude += remaining * math.cos(heading) / 60
+                break
+    return records
+
+
 def generate_events(
     seed: int,
     vessel_count: int,
@@ -83,8 +142,7 @@ def generate_events(
 ) -> dict[str, list[Event]]:
     """Generate deterministic, schema-valid telemetry and hazard events.
 
-    Vessel tracks are clustered around the generated hazard area so the next
-    processing phase has useful positive and negative risk cases.
+    Vessel tracks alternate between inner and outer lanes at seeded speeds.
     """
     if not isinstance(seed, int):
         raise TypeError("seed must be an integer")
@@ -108,29 +166,9 @@ def generate_events(
     telemetry: list[Event] = []
 
     for vessel_index in range(vessel_count):
-        latitude = DEMO_NODES["chokepoint"][0] + rng.uniform(-0.5, 0.5)
-        longitude = DEMO_NODES["chokepoint"][1] + rng.uniform(-0.5, 0.5)
-        speed = rng.uniform(8.0, 22.0)
-        heading = rng.uniform(0.0, 359.999)
-        for point_index in range(telemetry_points):
-            event_time = start_time + timedelta(
-                seconds=interval_seconds * point_index
-            )
-            event = {
-                "schema_version": SCHEMA_VERSION,
-                "event_id": f"telemetry-{vessel_index:05d}-{point_index:04d}",
-                "event_time": _utc_timestamp(event_time),
-                "vessel_id": f"vessel-{vessel_index:05d}",
-                "latitude": round(latitude, 6),
-                "longitude": round(longitude, 6),
-                "speed_knots": round(speed, 3),
-                "heading_deg": round(heading, 3),
-            }
-            validate_event("vessel_telemetry", event)
-            telemetry.append(event)
-            latitude = max(-90.0, min(90.0, latitude + rng.uniform(-0.025, 0.025)))
-            longitude = max(-180.0, min(180.0, longitude + rng.uniform(-0.025, 0.025)))
-            heading = (heading + rng.uniform(-8.0, 8.0)) % 360
+        telemetry.extend(_vessel_track(
+            rng, vessel_index, telemetry_points, interval_seconds, start_time
+        ))
 
     for alert in alerts:
         validate_event("weather_alert", alert)

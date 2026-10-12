@@ -4,6 +4,10 @@ Own synthetic event generation, repeatable replay, validation, and publishing to
 
 The demo geography is offshore Chennai in the Bay of Bengal. Shared coordinates,
 lane paths, nautical-mile distances, and bearings live in `georisk.geo_demo`.
+Vessels alternate inner and outer lanes, start at seeded fractions along them,
+and move by heading and speed. A seeded initial position jitter of ±0.002°
+provides track variation without adding artificial velocity noise. Vessels
+advance through waypoints and stop at the destination.
 
 ## Starter modules
 

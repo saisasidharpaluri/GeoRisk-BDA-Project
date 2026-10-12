@@ -180,3 +180,37 @@ def test_generator_telemetry_is_time_ordered():
     keys = [(event["event_time"], event["vessel_id"]) for event in events]
     assert keys == sorted(keys)
     assert events[0]["vessel_id"] == "vessel-00000"
+
+
+def test_displacement_matches_speed():
+    from georisk.geo_demo import haversine_nm
+
+    telemetry = generate_events(7, 8, telemetry_points=4)["telemetry"]
+    for index in range(8):
+        track = [row for row in telemetry if row["vessel_id"] == f"vessel-{index:05d}"]
+        for a, b in zip(track, track[1:]):
+            distance = haversine_nm(a["latitude"], a["longitude"], b["latitude"], b["longitude"])
+            assert distance == pytest.approx(a["speed_knots"] * 300 / 3600, rel=0.1)
+
+
+def test_heading_points_toward_waypoint():
+    from georisk.geo_demo import DEMO_NODES, initial_bearing_deg
+
+    row = generate_events(7, 1)["telemetry"][0]
+    target = DEMO_NODES["chokepoint" if row["longitude"] < 81.18 else "port_b"]
+    expected = initial_bearing_deg(row["latitude"], row["longitude"], *target)
+    assert abs((row["heading_deg"] - expected + 180) % 360 - 180) < 15
+
+
+def test_motion_is_deterministic():
+    assert generate_events(19, 4, telemetry_points=24) == generate_events(19, 4, telemetry_points=24)
+
+
+def test_vessel_stops_at_end_of_lane():
+    from georisk.geo_demo import DEMO_NODES
+
+    track = generate_events(7, 1, telemetry_points=100)["telemetry"]
+    assert track[-1]["speed_knots"] == 0
+    assert (track[-1]["latitude"], track[-1]["longitude"]) == DEMO_NODES["port_b"]
+    assert track[-2]["latitude"] == track[-1]["latitude"]
+    assert track[-2]["longitude"] == track[-1]["longitude"]
