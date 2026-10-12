@@ -82,13 +82,13 @@ def process_events(
         except (ContractValidationError, TypeError) as exc:
             if strict:
                 raise
-            quarantine.append(_quarantine_entry("weather_alert", "contract_violation", alert, exc))
-            continue
-        if _parse_utc(alert["valid_until"]) <= _parse_utc(alert["valid_from"]):
-            exc = ValueError(f"alert {alert['alert_id']} has an invalid validity range")
-            if strict:
-                raise exc
-            quarantine.append(_quarantine_entry("weather_alert", "invalid_validity_range", alert, exc))
+            reason = (
+                "invalid_validity_range"
+                if isinstance(exc, ContractValidationError)
+                and "valid_until: must be after valid_from" in exc.errors
+                else "contract_violation"
+            )
+            quarantine.append(_quarantine_entry("weather_alert", reason, alert, exc))
             continue
         alert_records.append(dict(alert))
 

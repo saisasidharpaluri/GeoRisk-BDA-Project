@@ -17,3 +17,7 @@ helper remains uncached and returns a freshly loaded schema on each call.
 - 2026-10: additive optional fields on risk_event (no version bump): event_id,
   latitude, longitude, and coverage_mode (center or overlap). Hazard matches
   require alert_id and severity (1–5); only documented match fields are accepted.
+- 2026-10 (S13): v1 weather-alert validation now enforces longitude/latitude
+  bounds, closure of every Polygon/MultiPolygon ring, and valid_until strictly
+  after valid_from. Producers sending formerly accepted invalid geometry or
+  empty/inverted intervals must correct their records.

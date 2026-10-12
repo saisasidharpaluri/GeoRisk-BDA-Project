@@ -71,8 +71,30 @@ def _validator(contract: str) -> Draft202012Validator:
     return Draft202012Validator(load_schema(contract), format_checker=FORMAT_CHECKER)
 
 
+def _semantic_errors(contract: str, event: Mapping[str, Any]) -> list[str]:
+    """Check relationships after the event's JSON structure has been validated."""
+    errors = []
+    if contract == "weather_alert":
+        geometry = event["geometry"]
+        for index, coordinates in enumerate(geometry["coordinates"]):
+            if geometry["type"] == "Polygon":
+                if coordinates[0] != coordinates[-1]:
+                    errors.append(f"geometry.coordinates[{index}]: ring is not closed")
+            else:
+                for ring_index, ring in enumerate(coordinates):
+                    if ring[0] != ring[-1]:
+                        errors.append(
+                            f"geometry.coordinates[{index}][{ring_index}]: ring is not closed"
+                        )
+        valid_from = datetime.fromisoformat(event["valid_from"].replace("Z", "+00:00"))
+        valid_until = datetime.fromisoformat(event["valid_until"].replace("Z", "+00:00"))
+        if valid_until <= valid_from:
+            errors.append("valid_until: must be after valid_from")
+    return errors
+
+
 def validate_event(contract: str, event: Mapping[str, Any]) -> None:
-    """Validate an event and raise one error containing all schema violations."""
+    """Validate structure and semantics, raising detailed contract violations."""
     if not isinstance(event, Mapping):
         raise TypeError("event must be a mapping")
 
@@ -84,6 +106,9 @@ def validate_event(contract: str, event: Mapping[str, Any]) -> None:
             for error in errors
         ]
         raise ContractValidationError(contract, messages)
+    semantic_errors = _semantic_errors(contract, event)
+    if semantic_errors:
+        raise ContractValidationError(contract, semantic_errors)
 
 
 def is_valid_event(contract: str, event: Mapping[str, Any]) -> bool:

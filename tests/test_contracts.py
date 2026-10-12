@@ -146,6 +146,47 @@ def test_matching_hazard_fields_are_validated(hazard):
         validate_event("risk_event", dict(_risk_event(), matching_hazards=[hazard]))
 
 
+@pytest.mark.parametrize("position", [[500, 500], [181, 12], [78, 91], [-181, 12], [78, -91]])
+@pytest.mark.parametrize("multipolygon", [False, True])
+def test_alert_rejects_out_of_range_coordinates(position, multipolygon):
+    event = _alert()
+    event["geometry"]["coordinates"][0][1] = position
+    if multipolygon:
+        event["geometry"] = {"type": "MultiPolygon", "coordinates": [event["geometry"]["coordinates"]]}
+    with pytest.raises(ContractValidationError, match="geometry"):
+        validate_event("weather_alert", event)
+
+
+@pytest.mark.parametrize("multipolygon", [False, True])
+def test_alert_rejects_unclosed_ring(multipolygon):
+    event = _alert()
+    ring = [[78.2, 12.2], [78.4, 12.2], [78.4, 12.4], [78.3, 12.3]]
+    event["geometry"]["coordinates"].append(ring)
+    path = "geometry.coordinates[1]"
+    if multipolygon:
+        event["geometry"] = {"type": "MultiPolygon", "coordinates": [event["geometry"]["coordinates"]]}
+        path = "geometry.coordinates[0][1]"
+    with pytest.raises(ContractValidationError) as error:
+        validate_event("weather_alert", event)
+    assert error.value.errors == [f"{path}: ring is not closed"]
+
+
+@pytest.mark.parametrize("valid_until", ["2026-01-01T11:00:00Z", "2026-01-01T12:00:00Z"])
+def test_alert_rejects_inverted_validity(valid_until):
+    with pytest.raises(ContractValidationError) as error:
+        validate_event("weather_alert", dict(_alert(), valid_until=valid_until))
+    assert error.value.errors == ["valid_until: must be after valid_from"]
+
+
+def test_semantic_checks_wait_for_valid_structure(monkeypatch):
+    def unexpected(*args):
+        pytest.fail("semantic checks ran on malformed input")
+
+    monkeypatch.setattr(contracts, "_semantic_errors", unexpected)
+    with pytest.raises(ContractValidationError):
+        validate_event("weather_alert", dict(_alert(), geometry={}))
+
+
 def test_missing_required_fields_are_rejected():
     event = _alert()
     del event["valid_until"]
