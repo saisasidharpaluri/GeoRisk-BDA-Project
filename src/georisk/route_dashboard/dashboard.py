@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from georisk.route_dashboard.route_optimizer import demonstration_graph, find_alternative_route
+from georisk.config import GeoRiskConfig
+from georisk.route_dashboard.edge_risk import score_graph
+from georisk.route_dashboard.route_optimizer import (
+    demonstration_graph, demonstration_nodes, find_alternative_route,
+)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -27,14 +31,19 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def load_dashboard_data(root: str | Path = "output") -> dict[str, list[dict[str, Any]]]:
+def load_dashboard_data(
+    root: str | Path | None = None, *, input_dir: str | Path | None = None,
+    processed_dir: str | Path | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     """Load Phase 2/3 local files without hiding missing-data states."""
-    base = Path(root)
+    base = Path(root) if root is not None else Path("output")
+    inputs = Path(input_dir) if input_dir is not None else base / "data"
+    processed = Path(processed_dir) if processed_dir is not None else base / "processed"
     return {
-        "telemetry": _read_jsonl(base / "data" / "vessel-telemetry.jsonl"),
-        "weather_alerts": _read_jsonl(base / "data" / "weather-alerts.jsonl"),
-        "risk_events": _read_jsonl(base / "processed" / "risk-events.jsonl"),
-        "density_metrics": _read_jsonl(base / "processed" / "density-metrics.jsonl"),
+        "telemetry": _read_jsonl(inputs / "vessel-telemetry.jsonl"),
+        "weather_alerts": _read_jsonl(inputs / "weather-alerts.jsonl"),
+        "risk_events": _read_jsonl(processed / "risk-events.jsonl"),
+        "density_metrics": _read_jsonl(processed / "density-metrics.jsonl"),
     }
 
 
@@ -65,6 +74,24 @@ def dashboard_summary(data: dict[str, list[dict[str, Any]]], *, resolution: int 
     }
 
 
+def dashboard_route(
+    data: dict[str, list[dict[str, Any]]], *, resolution: int, coverage_mode: str,
+    risk_threshold: float, risk_penalty: float,
+) -> dict[str, Any] | None:
+    """Score the demo graph at the latest telemetry time for the UI and report."""
+    if not data["telemetry"]:
+        return None
+    at_time = max(event["event_time"] for event in data["telemetry"])
+    graph = score_graph(
+        demonstration_graph(), demonstration_nodes(), data["weather_alerts"],
+        data["density_metrics"], at_time=at_time, resolution=resolution,
+        coverage_mode=coverage_mode,
+    )
+    route = find_alternative_route(graph, "port_a", "port_b", risk_threshold,
+                                   risk_penalty=risk_penalty)
+    return {**route, "at_time": at_time, "edge_scores": graph}
+
+
 def _render_map(st: Any, telemetry: list[dict[str, Any]]) -> None:
     points = [
         {"lat": row["latitude"], "lon": row["longitude"], "vessel_id": row["vessel_id"]}
@@ -86,13 +113,16 @@ def main() -> None:
             "Streamlit is required to run the dashboard. Install the dashboard extra."
         ) from exc
 
+    settings = GeoRiskConfig.from_env()
     st.set_page_config(page_title="GeoRisk-Spark", layout="wide")
     st.title("GeoRisk-Spark")
     st.caption("Synthetic demonstration data | H3 candidate risk screen")
-    data_root = st.sidebar.text_input("Data directory", "output")
-    threshold = st.sidebar.slider("Route risk threshold", 0.0, 1.0, 0.5, 0.05)
-    data = load_dashboard_data(data_root)
-    summary = dashboard_summary(data)
+    input_dir = st.sidebar.text_input("Input directory", str(settings.input_dir))
+    processed_dir = st.sidebar.text_input("Processed directory", str(settings.processed_dir))
+    threshold = st.sidebar.slider("Route risk threshold", 0.0, 1.0, settings.route_risk_threshold, 0.05)
+    penalty = st.sidebar.number_input("Route risk penalty", min_value=0.0, value=settings.route_risk_penalty)
+    data = load_dashboard_data(input_dir=input_dir, processed_dir=processed_dir)
+    summary = dashboard_summary(data, resolution=settings.resolution)
 
     columns = st.columns(5)
     columns[0].metric("Telemetry events", summary["telemetry_count"])
@@ -114,9 +144,16 @@ def main() -> None:
         st.info("No risk events are available.")
 
     st.subheader("Route comparison")
-    route = find_alternative_route(
-        demonstration_graph(), "port_a", "port_b", threshold
-    )
+    try:
+        route = dashboard_route(data, resolution=settings.resolution,
+                                coverage_mode=settings.coverage_mode,
+                                risk_threshold=threshold, risk_penalty=penalty)
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+    if route is None:
+        st.info("No vessel telemetry is available for route scoring.")
+        return
     st.write(
         {
             "baseline_path": " → ".join(route["baseline"]["path"]),

@@ -46,3 +46,10 @@ and persists both `route.at_time` and the scored graph in `route.edge_scores`.
 `dashboard_summary(data, resolution=7)` includes `simulated=True`, the configured
 `h3_resolution`, and units (delay in hours, speed in knots, distance in nm).
 Pipeline acceptance requires these labels alongside the latest event timestamp.
+
+The dashboard reads `GeoRiskConfig.from_env()` for input/processed directories,
+H3 settings, route threshold, and risk penalty. Sidebar fields start from those
+values. `load_dashboard_data(root=None, input_dir=None, processed_dir=None)`
+lets explicit directories override the legacy `root/data` and `root/processed`
+layout. The pipeline and dashboard share `dashboard_route()`, scoring the same
+hazards and density at the latest telemetry timestamp with the selected penalty.

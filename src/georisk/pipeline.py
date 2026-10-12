@@ -14,13 +14,7 @@ from georisk.logging_utils import configure_logging
 from georisk.ingestion.generator import write_jsonl
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.processing.stream_job import run_streaming_job
-from georisk.route_dashboard.dashboard import dashboard_summary, load_dashboard_data
-from georisk.route_dashboard.route_optimizer import (
-    demonstration_graph,
-    demonstration_nodes,
-    find_alternative_route,
-)
-from georisk.route_dashboard.edge_risk import score_graph
+from georisk.route_dashboard.dashboard import dashboard_route, dashboard_summary, load_dashboard_data
 from georisk.storage_analytics.delay_features import build_delay_rows
 from georisk.storage_analytics.delay_model import FEATURES, predict, split_by_time, train_and_evaluate
 from georisk.storage_analytics.lake import density_summary, risk_summary, write_partitioned
@@ -124,23 +118,16 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         "evaluation_count": model["evaluation_count"],
         "model_metrics": model["model_metrics"], "baseline_metrics": model["baseline_metrics"],
     }})
-    at_time = max(event["event_time"] for event in events["telemetry"])
-    scored_graph = score_graph(
-        demonstration_graph(), demonstration_nodes(), events["weather_alerts"],
-        processed["density_metrics"], at_time=at_time, resolution=settings.resolution,
-        coverage_mode=settings.coverage_mode,
+    dashboard_data = load_dashboard_data(
+        settings.dashboard_dir, input_dir=settings.input_dir, processed_dir=settings.processed_dir,
     )
-    route = find_alternative_route(
-        scored_graph,
-        "port_a",
-        "port_b",
-        settings.route_risk_threshold,
+    route = dashboard_route(
+        dashboard_data, resolution=settings.resolution, coverage_mode=settings.coverage_mode,
+        risk_threshold=settings.route_risk_threshold,
         risk_penalty=settings.route_risk_penalty,
     )
-    route["at_time"] = at_time
-    route["edge_scores"] = scored_graph
     logger.info("Route decision", extra={"georisk": route})
-    summary = dashboard_summary(load_dashboard_data(settings.dashboard_dir), resolution=settings.resolution)
+    summary = dashboard_summary(dashboard_data, resolution=settings.resolution)
     artifacts = artifact_manifest(
         [
             settings.input_dir / "vessel-telemetry.jsonl",
