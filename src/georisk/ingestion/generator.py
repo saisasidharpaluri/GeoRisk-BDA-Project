@@ -193,6 +193,31 @@ def iter_events(
             yield stream_key, dict(event) if isinstance(event, Mapping) else event
 
 
+def iter_events_by_time(
+    events: Mapping[str, Iterable[Event]], validate: bool = True,
+) -> Iterable[tuple[str, Event]]:
+    """Yield by UTC time, alerts first at ties, then event ID.
+
+    Invalid timestamps sort last when validation is disabled, allowing replay
+    to quarantine malformed records without disrupting valid event order.
+    """
+    def key(item: tuple[str, Event]) -> tuple[datetime, int, str]:
+        stream, event = item
+        timestamp = datetime.max.replace(tzinfo=UTC)
+        event_id = ""
+        if isinstance(event, Mapping):
+            event_id = str(event.get("event_id", ""))
+            try:
+                parsed = datetime.fromisoformat(event["event_time"].replace("Z", "+00:00"))
+                if parsed.tzinfo is not None:
+                    timestamp = parsed.astimezone(UTC)
+            except (KeyError, TypeError, ValueError, AttributeError):
+                pass
+        return timestamp, 0 if stream == "weather_alerts" else 1, event_id
+
+    yield from sorted(iter_events(events, validate=validate), key=key)
+
+
 def replay_events(
     events: Mapping[str, Iterable[Event]],
     publish: PublishFunction,
@@ -213,7 +238,7 @@ def replay_events(
 
     generated = published = rejected = 0
     first_error: Exception | None = None
-    for stream_key, event in iter_events(events, validate=False):
+    for stream_key, event in iter_events_by_time(events, validate=False):
         if max_events is not None and generated >= max_events:
             break
         generated += 1

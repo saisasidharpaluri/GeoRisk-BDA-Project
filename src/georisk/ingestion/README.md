@@ -38,3 +38,11 @@ Replay validates each event, counts invalid events as rejected, and optionally c
 
 Generated telemetry is sorted by `(event_time, vessel_id)` before returning
 and writing JSONL, so replay input follows event-time order.
+
+`generate_scenario(ScenarioConfig())` generates 20 vessels over 120 minutes at
+300-second intervals. Eight slow vessels start around the chokepoint at 6 knots
+(capped by the total vessel count). H1 covers the chokepoint from minute 0 to 150;
+H2 covers part of the outer lane from minute 30 to 90. Validity is half-open.
+`iter_events_by_time()` merges streams chronologically, with alerts before
+telemetry at equal timestamps and event IDs breaking ties. Replay and JSONL
+writing use this order; malformed timestamps are sorted last and quarantined.
