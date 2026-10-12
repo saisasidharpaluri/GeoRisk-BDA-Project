@@ -88,3 +88,28 @@ def test_stream_quarantines_invalid_telemetry_and_alerts(spark, tmp_path, stream
 def test_stream_no_files(spark, tmp_path):
     run(spark, tmp_path)
     assert read_dataset(tmp_path / "output", "risk_events") == []
+
+
+def test_stream_density_equals_batch_density_after_two_batches(spark, tmp_path, stream_data):
+    first, second = stream_data["telemetry"][:6], stream_data["telemetry"][6:]
+    publish(tmp_path / "input", first)
+    run(spark, tmp_path)
+    publish(tmp_path / "input", second + second[:1])
+    run(spark, tmp_path)
+    rows = without_date(read_dataset(tmp_path / "output", "density_metrics"))
+    expected = process_events(first + second, [])["density_metrics"]
+    key = lambda row: (row["window_start"], row["h3_index"])
+    assert sorted(rows, key=key) == sorted(expected, key=key)
+
+
+def test_stream_density_preserves_untouched_dates(spark, tmp_path, stream_data):
+    first = stream_data["telemetry"][:3]
+    next_day = [dict(row, event_id=f"next-{i}", event_time="2026-01-02T12:00:00Z")
+                for i, row in enumerate(first)]
+    publish(tmp_path / "input", first)
+    run(spark, tmp_path)
+    publish(tmp_path / "input", next_day)
+    run(spark, tmp_path)
+    assert {row["event_date"] for row in read_dataset(tmp_path / "output", "density_metrics")} == {
+        "2026-01-01", "2026-01-02",
+    }

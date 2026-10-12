@@ -12,7 +12,8 @@ from pyspark.sql.streaming import StreamingQuery
 from georisk.config import GeoRiskConfig
 from georisk.contracts import ContractValidationError, validate_event
 from georisk.processing.spark_transforms import (
-    TELEMETRY_SCHEMA, assign_h3, hazard_cells_df, match_risk, read_alerts, split_valid,
+    TELEMETRY_SCHEMA, assign_h3, density_keys, hazard_cells_df, match_risk, read_alerts,
+    split_valid, with_event_ts,
 )
 from georisk.processing.stream_job import _quarantine_entry
 
@@ -60,6 +61,27 @@ def _write_alert_quarantine(root: Path, batch_id: int, rows: list[dict]) -> None
     temporary.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
                          encoding="utf-8")
     temporary.replace(directory / f"batch-{batch_id}.jsonl")
+
+
+def _recompute_density(accepted: DataFrame, output: Path, window_minutes: int) -> None:
+    """Append vessel keys and replace only the dates touched by this batch."""
+    keys = density_keys(with_event_ts(accepted), window_minutes).withColumn(
+        "event_date", F.substring("window_start", 1, 10),
+    )
+    dates = [row.event_date for row in keys.select("event_date").distinct().collect()]
+    state_root = output / "state" / "density_keys"
+    keys.write.mode("append").partitionBy("event_date").parquet(str(state_root))
+    all_keys = accepted.sparkSession.read.option("basePath", str(state_root)).parquet(
+        *[str(state_root / f"event_date={date}") for date in dates],
+    )
+    metrics = all_keys.groupBy(
+        "event_date", "window_start", "window_end", "h3_index", "h3_resolution",
+    ).agg(F.countDistinct("vessel_id").alias("unique_vessel_count")).withColumn(
+        "schema_version", F.lit(1).cast("int"),
+    )
+    metrics.write.mode("overwrite").option("partitionOverwriteMode", "dynamic").partitionBy(
+        "event_date",
+    ).parquet(str(output / "curated" / "density_metrics"))
 
 
 def run_stream(
@@ -115,6 +137,7 @@ def run_stream(
                 risk.write.mode("overwrite").parquet(str(snapshot))
             accepted = spark.read.parquet(str(snapshot)).persist()
             if not accepted.isEmpty():
+                _recompute_density(accepted, output, window_minutes)
                 _unwritten(accepted, risk_root).write.mode("append").partitionBy(
                     "event_date",
                 ).parquet(str(risk_root))

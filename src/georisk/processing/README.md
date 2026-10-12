@@ -122,3 +122,8 @@ date. Checkpoints under `risk/` remember consumed files. Accepted batches are
 snapshotted under `georisk-batches/` before sink writes so retries use the same
 accepted records and hazard results. Keep the checkpoint with its output and
 use one writer per output root. Do not modify consumed input files in place.
+
+Distinct vessel/window/cell keys accumulate in `state/density_keys/`. Each batch
+recomputes only affected dates, replacing those density partitions with dynamic
+partition overwrite. Retries may repeat keys but count-distinct keeps the
+published metrics unchanged. No unsupported streaming count-distinct is used.
