@@ -42,3 +42,7 @@ severity, contributing alert IDs, and density. Hazard revisions use the latest
 version available at that time; validity and density windows exclude their end.
 The end-to-end pipeline uses these scores at the latest telemetry timestamp
 and persists both `route.at_time` and the scored graph in `route.edge_scores`.
+
+`dashboard_summary(data, resolution=7)` includes `simulated=True`, the configured
+`h3_resolution`, and units (delay in hours, speed in knots, distance in nm).
+Pipeline acceptance requires these labels alongside the latest event timestamp.

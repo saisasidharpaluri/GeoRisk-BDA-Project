@@ -166,6 +166,15 @@ freshness. A rejected validation exits with code 1.
 Validation recomputes every manifest entry's SHA-256 digest. Missing or modified
 artifacts fail `artifact_integrity`, with the affected paths in its detail.
 
+Each run also executes small deterministic acceptance scenarios for active and
+expired hazards, outside positions, duplicate density, late-event quarantine,
+and explained detours. Overlap mode additionally checks a boundary cell missed
+by center containment. Every expected `scenario_*` check must be present and
+pass. `dashboard_labels` checks simulation status, H3 resolution, and units;
+existing checks cover timestamps, Parquet outputs, and held-out model metrics.
+The guide's S3/Athena criterion is covered locally by Parquet/SQL tests; AWS
+deployment verification remains outside the local acceptance suite.
+
 ## Phase 8 deployment readiness
 
 Phase 8 adds a read-only deployment readiness plan for the AWS foundation.

@@ -38,7 +38,7 @@ def load_dashboard_data(root: str | Path = "output") -> dict[str, list[dict[str,
     }
 
 
-def dashboard_summary(data: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+def dashboard_summary(data: dict[str, list[dict[str, Any]]], *, resolution: int = 7) -> dict[str, Any]:
     """Create metric values and freshness information for UI or API use."""
     risk_events = data.get("risk_events", [])
     latest_values = [
@@ -48,6 +48,9 @@ def dashboard_summary(data: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     ]
     latest = max(latest_values) if latest_values else None
     return {
+        "simulated": True,
+        "h3_resolution": resolution,
+        "units": {"delay": "hours", "speed": "knots", "distance": "nm"},
         "telemetry_count": len(data.get("telemetry", [])),
         "active_alert_count": len(data.get("weather_alerts", [])),
         "risk_event_count": len(risk_events),

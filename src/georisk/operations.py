@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from georisk.logging_utils import configure_logging
+from georisk.scenarios import expected_scenario_names
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,20 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
     model = report.get("model", {})
     route = report.get("route", {})
     dashboard = report.get("dashboard", {})
+    config = report.get("config", {})
+    scenarios = report.get("scenarios", [])
+    for name in expected_scenario_names(config.get("coverage_mode", "overlap")):
+        matches = [item for item in scenarios if item.get("name") == name]
+        check(f"scenario_{name}", len(matches) == 1 and matches[0].get("passed") is True,
+              matches[0].get("detail", "") if matches else "required scenario is missing")
+    check(
+        "dashboard_labels",
+        dashboard.get("simulated") is True
+        and isinstance(dashboard.get("h3_resolution"), int)
+        and dashboard["h3_resolution"] == config.get("resolution")
+        and dashboard.get("units") == {"delay": "hours", "speed": "knots", "distance": "nm"},
+        "dashboard identifies simulated data, configured H3 resolution, and units",
+    )
 
     artifacts = report.get("artifacts", [])
     mismatched = []

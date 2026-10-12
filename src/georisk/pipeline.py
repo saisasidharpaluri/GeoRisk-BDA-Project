@@ -25,6 +25,7 @@ from georisk.storage_analytics.delay_features import build_delay_rows
 from georisk.storage_analytics.delay_model import FEATURES, predict, split_by_time, train_and_evaluate
 from georisk.storage_analytics.lake import density_summary, risk_summary, write_partitioned
 from georisk.operations import acceptance_checks, artifact_manifest
+from georisk.scenarios import run_acceptance_scenarios
 
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
     route["at_time"] = at_time
     route["edge_scores"] = scored_graph
     logger.info("Route decision", extra={"georisk": route})
-    summary = dashboard_summary(load_dashboard_data(settings.dashboard_dir))
+    summary = dashboard_summary(load_dashboard_data(settings.dashboard_dir), resolution=settings.resolution)
     artifacts = artifact_manifest(
         [
             settings.input_dir / "vessel-telemetry.jsonl",
@@ -194,6 +195,11 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         "route": route,
         "dashboard": summary,
         "artifacts": artifacts,
+        "scenarios": run_acceptance_scenarios(
+            resolution=settings.resolution, coverage_mode=settings.coverage_mode,
+            window_minutes=settings.density_window_minutes,
+            allowed_lateness_minutes=settings.allowed_lateness_minutes,
+        ),
     }
     report["acceptance"] = acceptance_checks(report)
     settings.report_path.parent.mkdir(parents=True, exist_ok=True)
