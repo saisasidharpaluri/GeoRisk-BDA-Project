@@ -26,3 +26,5 @@ streamlit run src/georisk/route_dashboard/dashboard.py
 ## Handoff
 
 Coordinate with Member 3 on Athena query results and field names. Coordinate with Member 2 on alert and cell outputs. Keep the dashboard runnable locally before adding cloud query access.
+
+Route comparisons report all edges above the risk threshold, identify those on the baseline path, and explain the detour with travel-time and total-risk differences.

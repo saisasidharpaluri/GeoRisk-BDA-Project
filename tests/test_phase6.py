@@ -58,6 +58,8 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     assert report["model"]["evaluation_count"] > 0
     assert report["model"]["model_metrics"]["mae"] <= report["model"]["baseline_metrics"]["mae"]
     assert report["route"]["route_changed"] is True
+    assert report["route"]["alternative"]["blocked_edges"]
+    assert report["route"]["explanation"]
     assert report["dashboard"]["has_data"] is True
     saved = json.loads(config.report_path.read_text(encoding="utf-8"))
     assert saved["status"] == "success"

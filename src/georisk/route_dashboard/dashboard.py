@@ -124,6 +124,7 @@ def main() -> None:
             "synthetic_demo": route["synthetic_demo"],
         }
     )
+    st.write(route["explanation"])
 
 
 if __name__ == "__main__":

@@ -9,6 +9,32 @@ from georisk.route_dashboard.route_optimizer import (
 )
 
 
+def test_blocked_edges_reported_when_threshold_exceeded():
+    result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
+    assert result["baseline"]["blocked_edges"] == []
+    assert result["alternative"]["blocked_edges"] == [
+        ["chokepoint", "port_b"], ["port_a", "chokepoint"],
+    ]
+    assert result["baseline_blocked_edges"] == [
+        ["port_a", "chokepoint"], ["chokepoint", "port_b"],
+    ]
+
+
+def test_no_blocked_edges_at_threshold_one():
+    result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 1.0)
+    assert result["alternative"]["blocked_edges"] == []
+    assert result["baseline_blocked_edges"] == []
+    assert result["explanation"] == "Baseline route is within the risk threshold."
+
+
+def test_explanation_names_blocked_edges():
+    result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
+    assert result["explanation"] == (
+        "Edges above risk threshold 0.50 were unavailable: port_a→chokepoint (0.90), "
+        "chokepoint→port_b (0.90). Alternative adds +8.0 h and changes total risk by -1.60."
+    )
+
+
 def test_demonstration_route_changes_when_risky_lane_is_blocked():
     result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
 

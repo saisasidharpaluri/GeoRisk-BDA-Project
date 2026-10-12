@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 
@@ -74,15 +74,15 @@ def _shortest_path(
     risk_threshold: float | None,
     risk_penalty: float,
 ) -> RouteResult:
-    queue: list[tuple[float, tuple[str, ...], float, float, tuple[tuple[str, str], ...]]] = [
-        (0.0, (origin,), 0.0, 0.0, ())
+    queue: list[tuple[float, tuple[str, ...], float, float]] = [
+        (0.0, (origin,), 0.0, 0.0)
     ]
     best: dict[str, float] = {origin: 0.0}
     while queue:
-        cost, path, travel, risk, blocked = heapq.heappop(queue)
+        cost, path, travel, risk = heapq.heappop(queue)
         current = path[-1]
         if current == destination:
-            return RouteResult(path, travel, risk, cost, blocked)
+            return RouteResult(path, travel, risk, cost, ())
         if cost > best.get(current, math.inf) + 1e-12:
             continue
         for edge in graph[current]:
@@ -101,7 +101,6 @@ def _shortest_path(
                         path + (target,),
                         travel + float(edge["travel_hours"]),
                         risk + edge_risk,
-                        blocked,
                     ),
                 )
     raise ValueError(f"no eligible route from '{origin}' to '{destination}'")
@@ -132,6 +131,36 @@ def find_alternative_route(
     alternative = _shortest_path(
         graph, origin, destination, float(risk_threshold), float(risk_penalty)
     )
+    blocked = sorted(
+        (source, edge["to"])
+        for source, edges in graph.items() for edge in edges
+        if float(edge["risk"]) > risk_threshold
+    )
+    alternative = replace(alternative, blocked_edges=tuple(blocked))
+    baseline_blocked = [
+        (source, target) for source, target in zip(baseline.path, baseline.path[1:])
+        if (source, target) in blocked
+    ]
+    travel_delta = alternative.travel_hours - baseline.travel_hours
+    risk_delta = alternative.risk_score - baseline.risk_score
+    explanation = "Baseline route is within the risk threshold."
+    if baseline.path != alternative.path:
+        unavailable = ", ".join(
+            f"{source}→{target} ({float(edge['risk']):.2f})"
+            for source, target in baseline_blocked
+            for edge in graph[source] if edge["to"] == target
+            and float(edge["risk"]) > risk_threshold
+        )
+        if not unavailable:
+            unavailable = ", ".join(
+                f"{source}→{edge['to']} ({float(edge['risk']):.2f})"
+                for source, edges in sorted(graph.items()) for edge in edges
+                if float(edge["risk"]) > risk_threshold
+            ) or "none"
+        explanation = (
+            f"Edges above risk threshold {risk_threshold:.2f} were unavailable: {unavailable}. "
+            f"Alternative adds {travel_delta:+.1f} h and changes total risk by {risk_delta:+.2f}."
+        )
     return {
         "origin": origin,
         "destination": destination,
@@ -140,7 +169,9 @@ def find_alternative_route(
         "baseline": baseline.as_dict(),
         "alternative": alternative.as_dict(),
         "route_changed": baseline.path != alternative.path,
-        "travel_hour_delta": alternative.travel_hours - baseline.travel_hours,
-        "risk_delta": alternative.risk_score - baseline.risk_score,
+        "travel_hour_delta": travel_delta,
+        "risk_delta": risk_delta,
+        "baseline_blocked_edges": [list(edge) for edge in baseline_blocked],
+        "explanation": explanation,
         "synthetic_demo": True,
     }
