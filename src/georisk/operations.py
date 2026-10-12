@@ -5,10 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+from georisk.logging_utils import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -128,8 +133,10 @@ def validate_report(report_path: str | Path) -> dict[str, Any]:
 
 def validate_cli() -> None:
     """Validate the configured Phase 7 report from the command line."""
+    configure_logging()
     report_path = os.environ.get("GEORISK_REPORT_PATH", "output/reports/phase6-run.json")
     result = validate_report(report_path)
+    logger.info("Report validated", extra={"georisk": {"report_path": report_path, "passed": result["passed"]}})
     print(json.dumps(result, indent=2, sort_keys=True))
     if not result["passed"]:
         raise SystemExit(1)

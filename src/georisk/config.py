@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from georisk.logging_utils import LOG_LEVELS
+
 
 def _integer(values: Mapping[str, str], name: str, default: int) -> int:
     raw = values.get(name, str(default))
@@ -54,6 +56,7 @@ class GeoRiskConfig:
     evaluation_fraction: float = 0.2
     acceptance_required: bool = True
     strict_validation: bool = False
+    log_level: str = "INFO"
     deployment_mode: str = "local"
     aws_region: str = "us-east-1"
     aws_stack_name: str = "georisk-foundation"
@@ -65,6 +68,8 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if self.log_level not in LOG_LEVELS:
+            raise ValueError(f"GEORISK_LOG_LEVEL must be one of {LOG_LEVELS}")
         if (
             not isinstance(self.allowed_lateness_minutes, int)
             or isinstance(self.allowed_lateness_minutes, bool)
@@ -123,6 +128,7 @@ class GeoRiskConfig:
             evaluation_fraction=_float(source, "GEORISK_EVALUATION_FRACTION", 0.2),
             acceptance_required=_boolean(source, "GEORISK_ACCEPTANCE_REQUIRED", True),
             strict_validation=_boolean(source, "GEORISK_STRICT_VALIDATION", False),
+            log_level=source.get("GEORISK_LOG_LEVEL", "INFO").upper(),
             deployment_mode=source.get("GEORISK_DEPLOYMENT_MODE", "local").strip().lower(),
             aws_region=source.get("AWS_REGION", "us-east-1").strip(),
             aws_stack_name=source.get("GEORISK_AWS_STACK_NAME", "georisk-foundation").strip(),

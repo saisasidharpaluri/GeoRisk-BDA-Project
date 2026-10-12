@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from georisk.config import GeoRiskConfig
+from georisk.logging_utils import configure_logging
 from georisk.ingestion.generator import generate_events, write_jsonl
 from georisk.processing.stream_job import run_streaming_job
 from georisk.route_dashboard.dashboard import dashboard_summary, load_dashboard_data
@@ -19,6 +21,8 @@ from georisk.storage_analytics.delay_model import make_synthetic_label, split_by
 from georisk.storage_analytics.lake import density_summary, risk_summary, write_dataset
 from georisk.operations import acceptance_checks, artifact_manifest
 
+
+logger = logging.getLogger(__name__)
 
 def _event_date(events: list[dict[str, Any]]) -> str:
     if not events:
@@ -57,6 +61,10 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         telemetry_points=settings.telemetry_points,
     )
     generation_stats = write_jsonl(events, settings.input_dir)
+    logger.info("Generation complete", extra={"georisk": {
+        "generated": generation_stats.generated, "published": generation_stats.published,
+        "rejected": generation_stats.rejected,
+    }})
     processed = run_streaming_job(
         {
             "input_dir": settings.input_dir,
@@ -81,6 +89,9 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         event_date,
         dataset_name="density_metrics",
     )
+    logger.info("Lake datasets written", extra={"georisk": {
+        "risk_path": str(risk_path), "density_path": str(density_path),
+    }})
     delay_rows = _delay_rows(
         processed["risk_events"], processed["density_metrics"]
     )
@@ -88,6 +99,10 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         raise ValueError("end-to-end run requires at least two telemetry-derived model rows")
     training, evaluation = split_by_time(delay_rows, settings.evaluation_fraction)
     model = train_and_evaluate(training, evaluation)
+    logger.info("Model evaluated", extra={"georisk": {
+        "evaluation_count": model["evaluation_count"],
+        "model_metrics": model["model_metrics"], "baseline_metrics": model["baseline_metrics"],
+    }})
     route = find_alternative_route(
         demonstration_graph(),
         "port_a",
@@ -95,6 +110,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         settings.route_risk_threshold,
         risk_penalty=settings.route_risk_penalty,
     )
+    logger.info("Route decision", extra={"georisk": route})
     summary = dashboard_summary(load_dashboard_data(settings.dashboard_dir))
     artifacts = artifact_manifest(
         [
@@ -155,7 +171,9 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
 
 def run_cli() -> None:
     """Console entry point for a configured local demonstration run."""
-    report = run_end_to_end()
+    settings = GeoRiskConfig.from_env()
+    configure_logging(settings.log_level)
+    report = run_end_to_end(settings)
     print(json.dumps(report, indent=2, sort_keys=True))
     if report["config"]["acceptance_required"] and not report["acceptance"]["passed"]:
         raise SystemExit(1)

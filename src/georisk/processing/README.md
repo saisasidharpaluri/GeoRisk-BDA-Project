@@ -58,3 +58,10 @@ JSONL files. It records processing time, latest accepted event time, watermark,
 settings, final stats (including malformed JSON), and `simulated: true`.
 The pipeline embeds it under `processing.metadata`. This wall-clock-dependent
 file is excluded from the reproducible artifact manifest.
+
+The run and validation CLIs configure JSON-lines logs on stderr, leaving
+JSON results on stdout. GEORISK_LOG_LEVEL defaults to INFO; DEBUG includes
+one record per quarantine entry. INFO records contain processing settings,
+counts, generation counts, lake paths, model metrics, and route decisions.
+Library calls use named loggers without configuring application logging.
+Each line contains `ts`, `level`, `logger`, `message`, and structured fields.

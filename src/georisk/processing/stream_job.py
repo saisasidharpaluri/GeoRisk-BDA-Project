@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,6 +14,8 @@ from georisk.processing.h3_index import (
     COVERAGE_MODES, DEFAULT_COVERAGE_MODE, DEFAULT_RESOLUTION,
     _validate_resolution, point_to_cell, polygon_to_cells,
 )
+
+logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
 WINDOW_MINUTES = 15
@@ -86,6 +89,11 @@ def process_events(
     _validate_resolution(resolution)
     if coverage_mode not in COVERAGE_MODES:
         raise ValueError("coverage_mode must be center or overlap")
+    settings = {
+        "h3_resolution": resolution, "coverage_mode": coverage_mode,
+        "window_minutes": window_minutes, "allowed_lateness_minutes": allowed_lateness_minutes,
+    }
+    logger.info("Processing batch", extra={"georisk": settings})
     quarantine = []
     stats = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
     stats["duplicates_dropped"] = 0
@@ -193,6 +201,7 @@ def process_events(
     stats["max_event_time"] = _timestamp(max_event_time) if max_event_time else None
     stats["watermark"] = _timestamp(max_event_time - allowed_lateness) if max_event_time else None
     stats["quarantined"] = len(quarantine)
+    logger.info("Processing complete", extra={"georisk": {**settings, **stats}})
     return {
         "risk_events": risk_events, "density_metrics": density_metrics,
         "quarantine": quarantine, "stats": stats,
@@ -203,12 +212,14 @@ def _quarantine_entry(
     contract: str, reason: str, record: Any, exc: Exception
 ) -> dict[str, Any]:
     """Preserve rejected input with validation details and a UTC timestamp."""
-    return {
+    entry = {
         "contract": contract, "reason": reason,
         "errors": exc.errors if isinstance(exc, ContractValidationError) else [str(exc)],
         "record": dict(record) if isinstance(record, Mapping) else record,
         "quarantined_at": _timestamp(datetime.now(UTC)),
     }
+    logger.debug("Record quarantined", extra={"georisk": entry})
+    return entry
 
 
 def _read_jsonl(
@@ -300,4 +311,11 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
             json.dumps(results["metadata"], indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+    logger.info("Processing run complete", extra={"georisk": {
+        **results["stats"],
+        "h3_resolution": resolution,
+        "coverage_mode": results["metadata"]["coverage_mode"],
+        "window_minutes": results["metadata"]["window_minutes"],
+        "allowed_lateness_minutes": results["metadata"]["allowed_lateness_minutes"],
+    }})
     return results
