@@ -73,3 +73,8 @@ required telemetry fields and bounds, and assigns H3 cells with a pandas UDF.
 `split_valid()` returns valid and reason-tagged invalid DataFrames. Apply it
 before `assign_h3()`. UTC timestamps, schema version 1, speed 0..60 knots and
 heading 0..<360 degrees are required. Static alerts retain geometry as JSON.
+
+`hazard_cells_df()` validates the small driver-side alert list and expands only
+its latest revisions. `match_risk()` broadcasts those cells and uses half-open
+validity intervals. Unmatched events have `matching_hazards=[]`; matched hazards
+are sorted by alert ID. Output types match the Arrow lake schema.

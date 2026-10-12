@@ -10,8 +10,9 @@ pytestmark = pytest.mark.spark
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.processing.h3_index import point_to_cell
 from georisk.processing.spark_transforms import (
-    assign_h3, read_alerts, read_telemetry, split_valid,
+    assign_h3, hazard_cells_df, match_risk, read_alerts, read_telemetry, split_valid,
 )
+from georisk.processing.stream_job import process_events
 
 
 @pytest.fixture
@@ -62,3 +63,31 @@ def test_spark_json_readers_preserve_geometry_and_malformed_input(spark, tmp_pat
         assert invalid.first()._corrupt_record
     finally:
         frame.unpersist()
+
+
+@pytest.mark.parametrize("coverage_mode", ["overlap", "center"])
+def test_spark_risk_matches_process_events(spark, tmp_path, scenario, coverage_mode):
+    telemetry = scenario["telemetry"]
+    alerts = scenario["weather_alerts"]
+    valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry))
+    result = match_risk(assign_h3(valid, 7), hazard_cells_df(spark, alerts, 7, coverage_mode),
+                        coverage_mode)
+    expected = process_events(telemetry, alerts, coverage_mode=coverage_mode)["risk_events"]
+    assert sorted((row.asDict(recursive=True) for row in result.collect()),
+                  key=lambda row: row["event_id"]) == sorted(expected, key=lambda row: row["event_id"])
+
+
+def test_spark_risk_empty_hazards_and_revisions(spark, tmp_path, scenario):
+    original = scenario["weather_alerts"][0]
+    revision = dict(original, event_id="revision", event_time="2026-01-01T12:05:00Z", severity=5)
+    ring = original["geometry"]["coordinates"][0]
+    lon, lat = ring[0]
+    telemetry = [dict(scenario["telemetry"][0], latitude=lat, longitude=lon,
+                      event_id=f"boundary-{i}", event_time=time)
+                 for i, time in enumerate([original["valid_from"], original["valid_until"]])]
+    valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry))
+    indexed = assign_h3(valid, 7)
+    for alerts in ([], [original, revision]):
+        rows = match_risk(indexed, hazard_cells_df(spark, alerts, 7, "overlap"), "overlap").collect()
+        assert sorted((row.asDict(recursive=True) for row in rows), key=lambda row: row["event_id"]) == \
+            sorted(process_events(telemetry, alerts)["risk_events"], key=lambda row: row["event_id"])
