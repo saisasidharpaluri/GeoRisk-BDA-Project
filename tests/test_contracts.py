@@ -187,6 +187,24 @@ def test_semantic_checks_wait_for_valid_structure(monkeypatch):
         validate_event("weather_alert", dict(_alert(), geometry={}))
 
 
+@pytest.mark.parametrize("field", ["speed_knots", "heading_deg"])
+def test_telemetry_requires_speed_and_heading(field):
+    event = _telemetry()
+    del event[field]
+    with pytest.raises(ContractValidationError, match=field):
+        validate_event("vessel_telemetry", event)
+
+
+def test_telemetry_rejects_implausible_speed():
+    with pytest.raises(ContractValidationError, match="speed_knots"):
+        validate_event("vessel_telemetry", dict(_telemetry(), speed_knots=80))
+
+
+@pytest.mark.parametrize("speed", [0, 60])
+def test_telemetry_accepts_speed_boundaries(speed):
+    validate_event("vessel_telemetry", dict(_telemetry(), speed_knots=speed))
+
+
 def test_missing_required_fields_are_rejected():
     event = _alert()
     del event["valid_until"]

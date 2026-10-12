@@ -4,7 +4,7 @@
   "title": "GeoRisk vessel telemetry v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "event_id", "event_time", "vessel_id", "latitude", "longitude"],
+  "required": ["schema_version", "event_id", "event_time", "vessel_id", "latitude", "longitude", "speed_knots", "heading_deg"],
   "properties": {
     "schema_version": {"const": 1},
     "event_id": {"type": "string", "minLength": 1},
@@ -12,7 +12,7 @@
     "vessel_id": {"type": "string", "minLength": 1},
     "latitude": {"type": "number", "minimum": -90, "maximum": 90},
     "longitude": {"type": "number", "minimum": -180, "maximum": 180},
-    "speed_knots": {"type": "number", "minimum": 0},
+    "speed_knots": {"type": "number", "minimum": 0, "maximum": 60},
     "heading_deg": {"type": "number", "minimum": 0, "exclusiveMaximum": 360}
   }
 }

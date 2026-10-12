@@ -21,3 +21,5 @@ helper remains uncached and returns a freshly loaded schema on each call.
   bounds, closure of every Polygon/MultiPolygon ring, and valid_until strictly
   after valid_from. Producers sending formerly accepted invalid geometry or
   empty/inverted intervals must correct their records.
+- 2026-10 (S14): v1 telemetry requires speed_knots (0–60 inclusive) and
+  heading_deg (0 inclusive to 360 exclusive). Producers must include both fields.
