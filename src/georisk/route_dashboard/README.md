@@ -72,3 +72,9 @@ unique vessel), baseline and alternative routes, and labelled port/waypoint
 markers. `build_deck()` frames `DEMO_BBOX` on a Carto basemap (no token) with a
 shared tooltip. Colours follow nautical-chart convention: magenta hazards,
 navy traffic, green safe passage.
+
+The live map uses `st.pydeck_chart` with one sidebar checkbox per layer (all on
+by default) and a legend that lists only the visible layers. Clicking a vessel
+or hazard zone selects it in the "Inspect" panel, which shows the vessel's
+latest position, risk flag, and matched hazards, or the alert's type, severity,
+validity, and H3 cell count. No-data states are explicit.

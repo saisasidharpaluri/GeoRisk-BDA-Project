@@ -7,10 +7,50 @@ from pathlib import Path
 from typing import Any
 
 from georisk.config import GeoRiskConfig
+from georisk.processing.h3_index import polygon_to_cells
 from georisk.route_dashboard.edge_risk import score_graph
 from georisk.route_dashboard.route_optimizer import (
     demonstration_graph, demonstration_nodes, find_alternative_route,
 )
+from georisk.route_dashboard.views import active_alerts, latest_positions, latest_risk_by_vessel
+
+MAP_LAYERS = (
+    ("vessels", "Vessels"), ("hazards", "Hazard zones"), ("risk_cells", "Risk cells"),
+    ("density", "Corridor density"), ("route", "Routes"),
+)
+
+_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&display=swap');
+:root { --gr-ink:#14232E; --gr-paper:#F2F5F4; --gr-magenta:#A8166F; --gr-green:#0E7C66;
+        --gr-slate:#5B6B78; --gr-sea:#1D5C80; --gr-rule:#C9D6DA; --gr-red:#E03A1E; }
+.block-container { padding-top: 1.5rem; max-width: 1480px; }
+[data-testid="stMain"] [data-testid="stMetricLabel"] p { font-size: .74rem; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--gr-slate); }
+[data-testid="stMetricValue"] { font-family: 'IBM Plex Mono', monospace; font-weight: 500; }
+.gr-legend { display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; margin: .45rem 0 0;
+  font: 500 .74rem/1.4 'IBM Plex Mono', monospace; color: var(--gr-ink); }
+.gr-legend span { white-space: nowrap; }
+.gr-key { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; }
+.gr-key.dot { border-radius: 50%; box-shadow: 0 0 0 1.5px var(--gr-paper) inset; }
+.gr-key.zone { background: rgba(168,22,111,.16); border: 2px solid var(--gr-magenta); }
+.gr-key.hex { clip-path: polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%); }
+.gr-key.line { height: 4px; width: 20px; vertical-align: 3px; border-radius: 2px; }
+.gr-hint { font: .78rem/1.45 'Public Sans', sans-serif; color: var(--gr-slate); margin: 0 0 .4rem; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+"""
+
+_LEGEND = {
+    "vessels": '<span><i class="gr-key dot" style="background:#14232E"></i>Vessel</span>'
+               '<span><i class="gr-key dot" style="background:#E03A1E"></i>Vessel in hazard</span>',
+    "hazards": '<span><i class="gr-key zone"></i>Active hazard zone</span>',
+    "risk_cells": '<span><i class="gr-key hex" style="background:#A8166F"></i>Alerted H3 cell</span>',
+    "density": '<span><i class="gr-key hex" style="background:linear-gradient(90deg,#9CC9DB,#1D5C80)">'
+               '</i>Vessels per cell (height)</span>',
+    "route": '<span><i class="gr-key line" style="background:#5B6B78"></i>Baseline (fastest)</span>'
+             '<span><i class="gr-key line" style="background:#0E7C66"></i>Alternative (risk-aware)</span>',
+}
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -92,16 +132,104 @@ def dashboard_route(
     return {**route, "at_time": at_time, "edge_scores": graph}
 
 
-def _render_map(st: Any, telemetry: list[dict[str, Any]]) -> None:
-    points = [
-        {"lat": row["latitude"], "lon": row["longitude"], "vessel_id": row["vessel_id"]}
-        for row in telemetry
-        if "latitude" in row and "longitude" in row
-    ]
-    if points:
-        st.map(points, latitude="lat", longitude="lon", size=20)
+def _map_selection(st: Any) -> tuple[str, str] | None:
+    """Return the (layer id, object id) last clicked on the map, if any."""
+    state = st.session_state.get("live_map")
+    try:
+        objects = state["selection"]["objects"]
+    except (KeyError, TypeError):
+        return None
+    for layer, field in (("vessels", "vessel_id"), ("hazards", "alert_id")):
+        if objects.get(layer):
+            return layer, objects[layer][0][field]
+    return None
+
+
+def _render_inspector(
+    st: Any, positions: list[dict[str, Any]], latest_risk: dict[str, dict[str, Any]],
+    alerts: list[dict[str, Any]], at_time: str | None, settings: GeoRiskConfig,
+) -> None:
+    st.subheader("Inspect")
+    st.html('<p class="gr-hint">Click a vessel or hazard zone on the map, '
+            'or choose one below.</p>')
+    selected = _map_selection(st)
+    if selected and selected != st.session_state.get("_map_selection_seen"):
+        st.session_state["_map_selection_seen"] = selected
+        st.session_state["inspect_vessel" if selected[0] == "vessels" else "inspect_alert"] = selected[1]
+
+    vessel_ids = [row["vessel_id"] for row in positions]
+    if vessel_ids:
+        if st.session_state.get("inspect_vessel") not in vessel_ids:
+            st.session_state.pop("inspect_vessel", None)
+        exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
+        vessel = st.selectbox(
+            "Inspect vessel", vessel_ids, key="inspect_vessel",
+            format_func=lambda v: f"{v}  · in hazard" if v in exposed else v,
+        )
+        position = next(row for row in positions if row["vessel_id"] == vessel)
+        risk = latest_risk.get(vessel, {})
+        st.json({
+            "vessel_id": vessel,
+            "latest_position": {
+                "event_time": position["event_time"], "latitude": position["latitude"],
+                "longitude": position["longitude"], "speed_knots": position.get("speed_knots"),
+                "heading_deg": position.get("heading_deg"), "h3_index": risk.get("h3_index"),
+            },
+            "risk_alert": bool(risk.get("risk_alert")),
+            "hazards": [
+                {key: hazard.get(key) for key in ("alert_id", "hazard_type", "severity")}
+                for hazard in risk.get("matching_hazards") or []
+            ],
+        }, expanded=2)
     else:
-        st.info("No vessel telemetry is available for the map.")
+        st.info("No vessels to inspect yet.")
+
+    alert_ids = [alert["alert_id"] for alert in alerts]
+    if alert_ids:
+        if st.session_state.get("inspect_alert") not in alert_ids:
+            st.session_state.pop("inspect_alert", None)
+        alert_id = st.selectbox("Inspect alert", alert_ids, key="inspect_alert")
+        alert = next(row for row in alerts if row["alert_id"] == alert_id)
+        st.json({
+            "alert_id": alert_id, "hazard_type": alert["hazard_type"],
+            "severity": alert["severity"],
+            "validity": {"valid_from": alert["valid_from"], "valid_until": alert["valid_until"],
+                         "active_at": at_time},
+            "cell_count": len(polygon_to_cells(alert["geometry"], settings.resolution,
+                                               settings.coverage_mode)),
+            "coverage": f"H3 res {settings.resolution}, {settings.coverage_mode}",
+        }, expanded=2)
+    else:
+        st.info("No hazard alerts are active at the latest event time.")
+
+
+def _render_map(
+    st: Any, layers: dict[str, bool], *, positions: list[dict[str, Any]],
+    exposed: set[str], alerts: list[dict[str, Any]], risk_events: list[dict[str, Any]],
+    density_rows: list[dict[str, Any]], route: dict[str, Any] | None,
+) -> None:
+    from georisk.route_dashboard import map_layers
+
+    st.subheader("Live map")
+    if not positions and not alerts:
+        st.info("No vessel telemetry or hazard alerts are available for the map.")
+        return
+    built = map_layers.node_layers(demonstration_nodes())
+    if layers["density"]:
+        built.append(map_layers.density_layer(density_rows))
+    if layers["hazards"]:
+        built.append(map_layers.hazards_layer(alerts))
+    if layers["risk_cells"]:
+        built.append(map_layers.risk_cells_layer(risk_events))
+    if layers["route"]:
+        built.append(map_layers.route_layer(route, demonstration_nodes()))
+    if layers["vessels"]:
+        built.append(map_layers.vessels_layer(positions, exposed))
+    st.pydeck_chart(map_layers.build_deck(built), height=560, on_select="rerun",
+                    selection_mode="single-object", key="live_map")
+    legend = "".join(_LEGEND[name] for name, enabled in layers.items() if enabled)
+    st.html(f'<div class="gr-legend">{legend}</div>' if legend else
+            '<p class="gr-hint">All map layers are hidden. Turn them on in the sidebar.</p>')
 
 
 def main() -> None:
@@ -115,12 +243,16 @@ def main() -> None:
 
     settings = GeoRiskConfig.from_env()
     st.set_page_config(page_title="GeoRisk-Spark", layout="wide")
+    st.html(_CSS)
     st.title("GeoRisk-Spark")
     st.caption("Synthetic demonstration data | H3 candidate risk screen")
     input_dir = st.sidebar.text_input("Input directory", str(settings.input_dir))
     processed_dir = st.sidebar.text_input("Processed directory", str(settings.processed_dir))
     threshold = st.sidebar.slider("Route risk threshold", 0.0, 1.0, settings.route_risk_threshold, 0.05)
     penalty = st.sidebar.number_input("Route risk penalty", min_value=0.0, value=settings.route_risk_penalty)
+    st.sidebar.subheader("Map layers")
+    layers = {name: st.sidebar.checkbox(label, value=True, key=f"layer_{name}")
+              for name, label in MAP_LAYERS}
     data = load_dashboard_data(input_dir=input_dir, processed_dir=processed_dir)
     summary = dashboard_summary(data, resolution=settings.resolution)
 
@@ -135,21 +267,38 @@ def main() -> None:
     else:
         st.warning("No current data is available. Start the Phase 2 replay first.")
 
-    st.subheader("Vessel positions")
-    _render_map(st, data["telemetry"])
-    st.subheader("Risk events")
-    if data["risk_events"]:
-        st.dataframe(data["risk_events"], use_container_width=True)
-    else:
-        st.info("No risk events are available.")
-
-    st.subheader("Route comparison")
+    at_time = summary["latest_event_time"]
+    alerts = active_alerts(data["weather_alerts"], at_time) if at_time else []
+    positions = latest_positions(data["telemetry"])
+    latest_risk = latest_risk_by_vessel(data["risk_events"])
+    exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
     try:
         route = dashboard_route(data, resolution=settings.resolution,
                                 coverage_mode=settings.coverage_mode,
                                 risk_threshold=threshold, risk_penalty=penalty)
+        route_error = None
     except ValueError as exc:
-        st.warning(str(exc))
+        route, route_error = None, str(exc)
+    density_rows = [row for row in data["density_metrics"]
+                    if at_time and row["window_start"] <= at_time < row["window_end"]]
+
+    map_column, inspect_column = st.columns([2.6, 1], gap="medium")
+    with map_column:
+        _render_map(st, layers, positions=positions, exposed=exposed, alerts=alerts,
+                    risk_events=data["risk_events"], density_rows=density_rows, route=route)
+    with inspect_column:
+        with st.container(height=640, border=True):
+            _render_inspector(st, positions, latest_risk, alerts, at_time, settings)
+
+    st.subheader("Risk events")
+    if data["risk_events"]:
+        st.dataframe(data["risk_events"], width="stretch")
+    else:
+        st.info("No risk events are available.")
+
+    st.subheader("Route comparison")
+    if route_error:
+        st.warning(route_error)
         return
     if route is None:
         st.info("No vessel telemetry is available for route scoring.")

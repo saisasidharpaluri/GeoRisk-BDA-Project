@@ -94,3 +94,16 @@ def test_build_deck_centres_on_demo_bbox():
     assert deck._tooltip["html"] == "{tooltip}"
     assert deck.map_provider == "carto"
     assert len(deck.layers) == 1
+
+
+def test_literal_props_are_not_serialized_as_accessors():
+    import json
+
+    route = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
+    deck = build_deck([vessels_layer([_position("a")], []), route_layer(route, DEMO_NODES),
+                       *node_layers(DEMO_NODES)])
+    layers = {layer["id"]: layer for layer in json.loads(deck.to_json())["layers"]}
+    assert layers["vessels"]["radiusUnits"] == "pixels"
+    assert layers["route"]["widthUnits"] == "pixels"
+    assert layers["node_labels"]["getAlignmentBaseline"] == "bottom"
+    assert not layers["node_labels"]["fontFamily"].startswith("@@=")

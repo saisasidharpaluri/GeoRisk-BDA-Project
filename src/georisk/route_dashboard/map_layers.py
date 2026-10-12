@@ -59,7 +59,7 @@ def vessels_layer(
     return pdk.Layer(
         "ScatterplotLayer", data, id="vessels", pickable=True, stroked=True, filled=True,
         get_position="position", get_fill_color="color", get_line_color=PAPER + [255],
-        get_radius=6, radius_units="pixels", line_width_min_pixels=1.5,
+        get_radius=6, radius_units="'pixels'", line_width_min_pixels=1.5,
     )
 
 
@@ -161,7 +161,7 @@ def route_layer(
             })
     return pdk.Layer(
         "PathLayer", data, id="route", pickable=True, get_path="path", get_color="color",
-        get_width="width", width_units="pixels", cap_rounded=True, joint_rounded=True,
+        get_width="width", width_units="'pixels'", cap_rounded=True, joint_rounded=True,
     )
 
 
@@ -175,23 +175,23 @@ def node_layers(nodes: Mapping[str, tuple[float, float]]) -> list[pdk.Layer]:
     return [
         pdk.Layer("ScatterplotLayer", data, id="nodes", pickable=True, stroked=True,
                   get_position="position", get_fill_color=PAPER + [255],
-                  get_line_color=INK + [255], get_radius=7, radius_units="pixels",
+                  get_line_color=INK + [255], get_radius=7, radius_units="'pixels'",
                   line_width_min_pixels=2),
         pdk.Layer("TextLayer", data, id="node_labels", get_position="position",
                   get_text="label", get_size=13, get_color=INK + [255],
                   get_alignment_baseline="'bottom'", get_pixel_offset=[0, -12],
-                  font_family="'IBM Plex Mono', monospace", font_weight=600,
+                  font_family="'IBM Plex Mono, monospace'", font_weight=600,
                   outline_width=3, outline_color=PAPER + [255],
                   font_settings={"sdf": True}),
     ]
 
 
-def build_deck(layers: Iterable[pdk.Layer], *, pitch: float = 35) -> pdk.Deck:
+def build_deck(layers: Iterable[pdk.Layer], *, pitch: float = 30) -> pdk.Deck:
     """Frame the demo bounding box off Chennai with one shared HTML tooltip."""
     view = pdk.ViewState(
         latitude=(DEMO_BBOX["lat_min"] + DEMO_BBOX["lat_max"]) / 2,
         longitude=(DEMO_BBOX["lon_min"] + DEMO_BBOX["lon_max"]) / 2,
-        zoom=8.3, pitch=pitch, bearing=0,
+        zoom=7.9, pitch=pitch, bearing=0,
     )
     return pdk.Deck(
         layers=list(layers), initial_view_state=view, map_provider="carto", map_style="light",
