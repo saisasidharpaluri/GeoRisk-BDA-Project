@@ -229,6 +229,7 @@ def test_runner_writes_quarantine_for_bad_json_line(tmp_path, bad_line):
     assert len(result["risk_events"]) == 1
     assert result["stats"]["telemetry_in"] == 2
     assert result["stats"]["quarantined"] == 1
+    assert result["metadata"]["counts"] == result["stats"]
     entry = json.loads((output / "quarantine.jsonl").read_text(encoding="utf-8"))
     assert entry == result["quarantine"][0]
     assert entry["reason"] == "invalid_json"
@@ -467,3 +468,42 @@ def test_duplicate_or_invalid_future_event_does_not_advance_watermark():
     assert result["stats"]["duplicates_dropped"] == 1
     assert result["stats"]["late_dropped"] == 0
     assert len(result["risk_events"]) == 2
+
+
+def test_runner_writes_run_metadata(tmp_path):
+    from georisk.config import GeoRiskConfig
+
+    settings = GeoRiskConfig.from_env({
+        "GEORISK_H3_COVERAGE_MODE": "center", "GEORISK_DENSITY_WINDOW_MINUTES": "5",
+        "GEORISK_ALLOWED_LATENESS_MINUTES": "0",
+    })
+    result = run_streaming_job({
+        "telemetry": [_telemetry("new", 12, 78, 30), _telemetry("old", 12, 78)],
+        "output_dir": tmp_path, "resolution": 8,
+        "coverage_mode": settings.coverage_mode,
+        "window_minutes": settings.density_window_minutes,
+        "allowed_lateness_minutes": settings.allowed_lateness_minutes,
+    })
+    metadata = json.loads((tmp_path / "run-metadata.json").read_text(encoding="utf-8"))
+    assert metadata == result["metadata"]
+    assert set(metadata) == {
+        "processed_at", "latest_event_time", "watermark", "h3_resolution",
+        "coverage_mode", "window_minutes", "allowed_lateness_minutes", "counts", "simulated",
+    }
+    assert datetime.fromisoformat(metadata["processed_at"].replace("Z", "+00:00")).utcoffset() == timedelta(0)
+    assert metadata["processed_at"].endswith("Z")
+    assert metadata["simulated"] is True
+    assert metadata["latest_event_time"] == metadata["watermark"] == _timestamp(30)
+    assert metadata["h3_resolution"] == 8
+    assert metadata["coverage_mode"] == "center"
+    assert metadata["window_minutes"] == 5
+    assert metadata["allowed_lateness_minutes"] == 0
+    assert metadata["counts"] == result["stats"]
+    assert metadata["counts"]["late_dropped"] == 1
+
+
+def test_empty_runner_returns_metadata_without_output_directory():
+    result = run_streaming_job({"telemetry": []})
+    assert result["metadata"]["latest_event_time"] is None
+    assert result["metadata"]["watermark"] is None
+    assert result["metadata"]["counts"]["telemetry_in"] == 0

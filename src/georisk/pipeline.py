@@ -130,6 +130,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "density_metric_count": len(processed["density_metrics"]),
             "quarantined_count": len(processed["quarantine"]),
             "stats": processed["stats"],
+            "metadata": processed["metadata"],
         },
         "lake": {
             "risk_path": str(risk_path),

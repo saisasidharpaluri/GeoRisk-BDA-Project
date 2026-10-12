@@ -279,10 +279,25 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
         results["stats"][key] += 1
     results["quarantine"] = quarantine + results["quarantine"]
     results["stats"]["quarantined"] = len(results["quarantine"])
+    results["metadata"] = {
+        "processed_at": _timestamp(datetime.now(UTC)),
+        "latest_event_time": results["stats"]["max_event_time"],
+        "watermark": results["stats"]["watermark"],
+        "h3_resolution": resolution,
+        "coverage_mode": config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
+        "window_minutes": config.get("window_minutes", WINDOW_MINUTES),
+        "allowed_lateness_minutes": config.get("allowed_lateness_minutes", 10),
+        "counts": dict(results["stats"]),
+        "simulated": True,
+    }
     if config.get("output_dir"):
         output_dir = Path(config["output_dir"])
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_jsonl(output_dir / "risk-events.jsonl", results["risk_events"])
         _write_jsonl(output_dir / "density-metrics.jsonl", results["density_metrics"])
         _write_jsonl(output_dir / "quarantine.jsonl", results["quarantine"])
+        (output_dir / "run-metadata.json").write_text(
+            json.dumps(results["metadata"], indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return results

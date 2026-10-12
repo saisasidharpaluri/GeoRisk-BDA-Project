@@ -66,6 +66,10 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     assert report["processing"]["stats"]["telemetry_in"] == 18
     assert (config.processed_dir / "quarantine.jsonl").exists()
     assert "quarantine.jsonl" not in json.dumps(report["artifacts"])
+    assert "run-metadata.json" not in json.dumps(report["artifacts"])
+    metadata = json.loads((config.processed_dir / "run-metadata.json").read_text())
+    assert report["processing"]["metadata"] == metadata
+    assert metadata["window_minutes"] == 5
     assert report["model"]["evaluation_count"] > 0
     assert report["model"]["model_metrics"]["mae"] <= report["model"]["baseline_metrics"]["mae"]
     assert report["route"]["route_changed"] is True

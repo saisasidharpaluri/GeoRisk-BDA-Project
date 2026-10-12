@@ -52,3 +52,9 @@ Stats include `late_dropped`, `max_event_time`, and `watermark` (UTC Z, or null
 without accepted telemetry). Watermark state is local to each batch. Accepted
 risk output is sorted by event time, vessel ID, and event ID; density output
 is sorted by window and cell. Sorting occurs after arrival-order decisions.
+
+The runner returns `metadata` and writes `run-metadata.json` alongside the
+JSONL files. It records processing time, latest accepted event time, watermark,
+settings, final stats (including malformed JSON), and `simulated: true`.
+The pipeline embeds it under `processing.metadata`. This wall-clock-dependent
+file is excluded from the reproducible artifact manifest.
