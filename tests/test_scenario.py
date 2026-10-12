@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from georisk.ingestion.generator import iter_events_by_time, replay_events
-from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
+from georisk.ingestion.scenario import DEFAULT_HAZARDS, ScenarioConfig, generate_scenario
 from georisk.processing.stream_job import process_events
 
 
@@ -75,3 +75,30 @@ def test_scenario_is_deterministic_and_supports_no_hazards():
 def test_scenario_rejects_invalid_settings(changes):
     with pytest.raises(ValueError):
         replace(ScenarioConfig(), **changes)
+
+
+@pytest.mark.parametrize(
+    ("changes", "error", "message"),
+    [
+        ({"seed": True}, TypeError, "seed must be an integer"),
+        ({"hazards": []}, TypeError, "hazards must be a tuple"),
+        ({"hazards": (object(),)}, TypeError, "hazards must be a tuple"),
+        ({"hazards": (DEFAULT_HAZARDS[0],) * 2}, ValueError, "alert_ids must be unique"),
+    ],
+)
+def test_scenario_rejects_ambiguous_identity_and_types(changes, error, message):
+    with pytest.raises(error, match=message):
+        replace(ScenarioConfig(), **changes)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"half_size_deg": 0},
+        {"appear_minute": -1},
+        {"expire_minute": 0},
+    ],
+)
+def test_hazard_rejects_empty_geometry_and_invalid_lifetime(changes):
+    with pytest.raises(ValueError):
+        replace(DEFAULT_HAZARDS[0], **changes)

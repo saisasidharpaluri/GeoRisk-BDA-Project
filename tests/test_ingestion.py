@@ -309,3 +309,25 @@ def test_replay_settings_from_env(tmp_path):
     for value in ("-1", "nan", "inf"):
         with pytest.raises(ValueError, match="GEORISK_REPLAY_SPEED_FACTOR"):
             GeoRiskConfig.from_env({"GEORISK_REPLAY_SPEED_FACTOR": value})
+
+
+@pytest.mark.parametrize("flush_every", [0, -1, True, 1.5])
+def test_file_stream_rejects_invalid_batch_size(tmp_path, flush_every):
+    from georisk.ingestion.file_stream import FileStreamPublisher
+
+    with pytest.raises(ValueError, match="flush_every"):
+        FileStreamPublisher(tmp_path, flush_every=flush_every)
+    assert not list(tmp_path.iterdir())
+
+
+def test_file_stream_rejects_unknown_stream_and_reopening(tmp_path):
+    from georisk.ingestion.file_stream import FileStreamPublisher
+
+    publisher = FileStreamPublisher(tmp_path)
+    with pytest.raises(ValueError, match="stream_name"):
+        publisher("../outside", {})
+    publisher.close()
+    with pytest.raises(ValueError, match="closed"):
+        with publisher:
+            pytest.fail("closed publisher must not be reopened")
+    assert not list(tmp_path.iterdir())

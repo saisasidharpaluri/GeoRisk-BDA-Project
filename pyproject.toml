@@ -75,3 +75,12 @@ check_untyped_defs = true
 "tests/test_sql.py" = ["E402"]
 # The AWS key expression is outside this phase's edit scope.
 "src/georisk/storage_analytics/lake.py" = ["E501"]
+
+[tool.coverage.run]
+source = ["georisk"]
+omit = ["*/georisk/deployment.py"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+fail_under = 85
