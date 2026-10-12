@@ -257,3 +257,11 @@ implementation and is retained as an archival artifact.
 - [0003: Output contracts](docs/decisions/0003-output-contracts.md)
 - [0004: Late events and watermark](docs/decisions/0004-late-events.md)
 - [0005: Density window](docs/decisions/0005-density-window.md)
+
+## Project documentation
+
+- [Demo runbook](docs/demo-runbook.md)
+- [Delay model](docs/delay-model.md)
+- [Limitations](docs/limitations.md)
+- [Evaluation](docs/evaluation.md)
+- [Architecture](docs/architecture.md)
