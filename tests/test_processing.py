@@ -138,6 +138,44 @@ def test_invalid_record_does_not_reserve_event_id():
     assert result["stats"]["quarantined"] == 1
 
 
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_reissued_alert_replaces_earlier_version(reverse_order, monkeypatch):
+    first = _alert(until_minutes=10)
+    latest = dict(_alert(until_minutes=40), event_time=_timestamp(5), event_id="revision-2")
+    alerts = [first, latest] if not reverse_order else [latest, first]
+    calls = []
+    original = stream_job.polygon_to_cells
+
+    def count(geometry, resolution):
+        calls.append(geometry)
+        return original(geometry, resolution)
+
+    monkeypatch.setattr(stream_job, "polygon_to_cells", count)
+    result = process_events([_telemetry("vessel", 12, 78, 20)], alerts)
+    assert result["risk_events"][0]["matching_hazards"][0]["valid_until"] == _timestamp(40)
+    assert result["stats"]["alert_revisions_superseded"] == 1
+    assert result["stats"]["alerts_in"] == 2
+    assert result["quarantine"] == []
+    assert len(calls) == 1
+
+
+def test_alert_revision_tie_keeps_later_input_for_whole_batch():
+    first = _alert()
+    latest = dict(_alert(center_latitude=14, center_longitude=80), event_id="revision-2")
+    result = process_events([_telemetry("vessel", 12, 78, -1)], [first, latest])
+    assert result["risk_events"][0]["risk_alert"] is False
+    assert result["stats"]["alert_revisions_superseded"] == 1
+
+
+def test_invalid_revision_does_not_replace_valid_alert():
+    first = _alert()
+    invalid = dict(first, event_time=_timestamp(5), severity=6)
+    result = process_events([_telemetry("vessel", 12, 78)], [first, invalid])
+    assert result["risk_events"][0]["risk_alert"] is True
+    assert result["stats"]["alert_revisions_superseded"] == 0
+    assert result["stats"]["quarantined"] == 1
+
+
 def test_processing_rejects_invalid_input():
     event = _telemetry("vessel", 12, 78)
     event["latitude"] = 100

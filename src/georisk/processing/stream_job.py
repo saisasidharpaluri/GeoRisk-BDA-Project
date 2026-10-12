@@ -92,8 +92,15 @@ def process_events(
             continue
         alert_records.append(dict(alert))
 
-    coverage: dict[str, list[tuple[dict[str, Any], datetime, datetime]]] = {}
+    latest_alerts: dict[str, dict[str, Any]] = {}
     for alert in alert_records:
+        previous = latest_alerts.get(alert["alert_id"])
+        if previous is None or _parse_utc(alert["event_time"]) >= _parse_utc(previous["event_time"]):
+            latest_alerts[alert["alert_id"]] = alert
+    stats["alert_revisions_superseded"] = len(alert_records) - len(latest_alerts)
+
+    coverage: dict[str, list[tuple[dict[str, Any], datetime, datetime]]] = {}
+    for alert in latest_alerts.values():
         valid_from = _parse_utc(alert["valid_from"])
         valid_until = _parse_utc(alert["valid_until"])
         for cell in polygon_to_cells(alert["geometry"], resolution):

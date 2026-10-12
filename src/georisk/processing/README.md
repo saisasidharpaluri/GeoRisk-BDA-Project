@@ -32,3 +32,5 @@ Consume Member 1's event schemas and publish risk and density rows using `src/ge
 Invalid records are quarantined by default while valid records continue through the batch. Results include quarantine entries and input/quarantine statistics. The runner always writes quarantine.jsonl, including malformed JSON lines (line number and up to 1,000 raw characters); its timestamps exclude it from the reproducible artifact manifest. Set GEORISK_STRICT_VALIDATION=true (or strict=True in process_events) to raise on invalid input.
 
 Risk rows carry the source event_id, latitude, longitude, and coverage_mode (currently center). Only the first valid telemetry record per event_id is processed in each batch; later copies are counted in duplicates_dropped without quarantine or density inflation.
+
+A re-issued alert replaces the earlier version for the whole batch. Among valid alerts sharing an alert_id, the latest event_time wins; ties keep the later input record. Superseded valid versions are counted in alert_revisions_superseded, and coverage is computed only for the retained versions.
