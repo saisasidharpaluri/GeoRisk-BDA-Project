@@ -1,4 +1,9 @@
 .venv/
+.venv-spark/
+.runtime-spark/
+spark-warehouse/
+derby.log
+metastore_db/
 .runtime-packages/
 __pycache__/
 *.py[cod]
@@ -13,5 +18,6 @@ output/processed/
 output/lake/
 output/reports/
 output/stream/
+output/spark/
 *.log
 *.docx

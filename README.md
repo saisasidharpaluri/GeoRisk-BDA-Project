@@ -41,6 +41,38 @@ The shared contract validator is in `src/georisk/contracts.py`. It validates
 events against the versioned schemas before later ingestion and processing
 stages consume them.
 
+## Spark setup (Phase 7)
+
+Use WSL2 Ubuntu on Windows. Spark's native Windows Hadoop helpers can be
+blocked by Application Control. Keep the Windows `.venv` separate from the
+Linux `.venv-spark` environment. Install Python 3.11 and Java 17 in Ubuntu,
+then run from `project/` in WSL:
+
+```bash
+python3.11 -m venv .venv-spark
+source .venv-spark/bin/activate
+python -m pip install -e '.[test,spark]' -c constraints.txt
+export PYSPARK_PYTHON="$PWD/.venv-spark/bin/python"
+python -m pytest -m spark -q
+```
+
+The isolated runtime prepared on this workstation lives in `.runtime-spark/`.
+To use it in a fresh WSL shell, run:
+
+```bash
+export JAVA_HOME="$PWD/.runtime-spark/java"
+export PATH="$JAVA_HOME/bin:$PATH"
+export PYSPARK_PYTHON="$PWD/.venv-spark/bin/python"
+source .venv-spark/bin/activate
+```
+
+`get_spark()` imports PySpark only when requested and uses UTC, four shuffle
+partitions, and a disabled Spark UI. Spark tests skip when PySpark or Java is
+missing; runtime errors are test failures. The Spark extra stays on 3.5.x.
+[AWS Glue release notes](https://docs.aws.amazon.com/glue/latest/dg/release-notes.html)
+currently list Glue 5.1 (Spark 3.5.6, Python 3.11, Java 17); these local
+prerequisites also match Glue 5.0. No AWS deployment is performed.
+
 ## Phase 2 local replay
 
 Generate deterministic fixtures and write the two logical streams as JSONL:
