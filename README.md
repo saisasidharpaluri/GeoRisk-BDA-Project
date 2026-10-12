@@ -249,3 +249,11 @@ cost guidance, and acceptance criteria. Workstream ownership is listed above;
 the guide's suggested schedule is not the implementation checklist. The
 [original PDF](output/pdf/GeoRisk-Spark-Team-Project-Guide.pdf) predates the local
 implementation and is retained as an archival artifact.
+
+## Decision records
+
+- [0001: H3 resolution](docs/decisions/0001-h3-resolution.md)
+- [0002: Coverage mode](docs/decisions/0002-coverage-mode.md)
+- [0003: Output contracts](docs/decisions/0003-output-contracts.md)
+- [0004: Late events and watermark](docs/decisions/0004-late-events.md)
+- [0005: Density window](docs/decisions/0005-density-window.md)
