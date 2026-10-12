@@ -17,7 +17,7 @@ FEATURES = (
 LABEL = "delay_hours"
 
 
-def make_synthetic_label(row: Mapping[str, Any]) -> float:
+def make_synthetic_label(row: Mapping[str, Any], noise_hours: float = 0.0) -> float:
     """Create the documented synthetic delay label used by the demo."""
     return max(
         0.0,
@@ -25,7 +25,8 @@ def make_synthetic_label(row: Mapping[str, Any]) -> float:
         + 0.015 * float(row["density"])
         + 0.45 * float(row["hazard_severity"])
         + 0.002 * float(row["route_distance_nm"])
-        - 0.01 * float(row["speed_knots"]),
+        - 0.01 * float(row["speed_knots"])
+        + noise_hours,
     )
 
 

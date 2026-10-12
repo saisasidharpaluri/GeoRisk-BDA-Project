@@ -59,6 +59,7 @@ class GeoRiskConfig:
     route_risk_threshold: float = 0.5
     route_risk_penalty: float = 4.0
     evaluation_fraction: float = 0.2
+    delay_noise_std_hours: float = 0.25
     acceptance_required: bool = True
     strict_validation: bool = False
     log_level: str = "INFO"
@@ -73,6 +74,11 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if (not isinstance(self.delay_noise_std_hours, (int, float))
+                or isinstance(self.delay_noise_std_hours, bool)
+                or not math.isfinite(self.delay_noise_std_hours)
+                or self.delay_noise_std_hours < 0):
+            raise ValueError("GEORISK_DELAY_NOISE_STD_HOURS must be a non-negative finite number")
         for name, value in (
             ("GEORISK_SCENARIO_DURATION_MINUTES", self.scenario_duration_minutes),
             ("GEORISK_TELEMETRY_INTERVAL_SECONDS", self.telemetry_interval_seconds),
@@ -149,6 +155,7 @@ class GeoRiskConfig:
             route_risk_threshold=_float(source, "GEORISK_ROUTE_RISK_THRESHOLD", 0.5),
             route_risk_penalty=_float(source, "GEORISK_ROUTE_RISK_PENALTY", 4.0),
             evaluation_fraction=_float(source, "GEORISK_EVALUATION_FRACTION", 0.2),
+            delay_noise_std_hours=_float(source, "GEORISK_DELAY_NOISE_STD_HOURS", 0.25),
             acceptance_required=_boolean(source, "GEORISK_ACCEPTANCE_REQUIRED", True),
             strict_validation=_boolean(source, "GEORISK_STRICT_VALIDATION", False),
             log_level=source.get("GEORISK_LOG_LEVEL", "INFO").upper(),

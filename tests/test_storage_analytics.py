@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from georisk.contracts import load_schema
+from georisk.config import GeoRiskConfig
+from georisk.geo_demo import DEMO_NODES, haversine_nm
 from georisk.ingestion.generator import generate_events
+from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
+from georisk.processing.stream_job import process_events
+from georisk.storage_analytics.delay_features import build_delay_rows
 from georisk.storage_analytics.arrow_schemas import ARROW_SCHEMAS
 from georisk.storage_analytics.lake import CONTRACT_BY_DATASET
 
@@ -226,6 +231,101 @@ def test_delay_model_rejects_missing_features():
     del row["density"]
     with pytest.raises(ValueError, match="density"):
         train_and_evaluate([_delay_row(1)], [row])
+
+
+@pytest.fixture(scope="module")
+def delay_inputs():
+    events = generate_scenario(ScenarioConfig(seed=7))
+    processed = process_events(events["telemetry"], events["weather_alerts"])
+    return events["telemetry"], processed["risk_events"], processed["density_metrics"]
+
+
+def test_delay_features_vary(delay_inputs):
+    rows = build_delay_rows(
+        *delay_inputs, destination=DEMO_NODES["port_b"], window_minutes=15, seed=7,
+    )
+    for feature in ("speed_knots", "route_distance_nm", "density"):
+        assert len({row[feature] for row in rows}) > 1
+    positions = {event["event_id"]: event for event in delay_inputs[0]}
+    for row in rows:
+        position = positions[row["event_id"]]
+        assert row["vessel_id"] == position["vessel_id"]
+        assert row["event_time"] == position["event_time"]
+        assert row["speed_knots"] == max(1.0, position["speed_knots"])
+        assert row["route_distance_nm"] == haversine_nm(
+            position["latitude"], position["longitude"], *DEMO_NODES["port_b"],
+        )
+        assert row["baseline_hours"] == row["route_distance_nm"] / row["speed_knots"]
+
+
+@pytest.mark.parametrize("window_minutes", [5, 15, 60])
+def test_density_feature_uses_event_window(window_minutes):
+    times = [datetime(2026, 1, 1, 12, tzinfo=UTC) + timedelta(minutes=offset)
+             for offset in (window_minutes - 1, window_minutes, 2 * window_minutes)]
+    risks = [dict(_risk(0), event_id=f"event-{i}", event_time=time.isoformat())
+             for i, time in enumerate(times)]
+    telemetry = [dict(event, latitude=13.0, longitude=80.5, speed_knots=0)
+                 for event in reversed(risks)]
+    density = [dict(_density(0), unique_vessel_count=count,
+                    window_start=(datetime(2026, 1, 1, 12, tzinfo=UTC)
+                                  + timedelta(minutes=i * window_minutes)).isoformat())
+               for i, count in enumerate((2, 9))]
+    density.append(dict(density[-1], h3_index="another-cell", unique_vessel_count=99))
+    rows = build_delay_rows(
+        telemetry, risks, density, destination=DEMO_NODES["port_b"],
+        window_minutes=window_minutes, seed=7, noise_std_hours=0,
+    )
+    assert [row["density"] for row in rows] == [2, 9, 0]
+    assert all(row["speed_knots"] == 1.0 for row in rows)
+    assert all(row["delay_hours"] == make_synthetic_label(row) for row in rows)
+
+
+def test_delay_rows_deterministic_with_seed(delay_inputs):
+    kwargs = dict(destination=DEMO_NODES["port_b"], window_minutes=15)
+    first = build_delay_rows(*delay_inputs, seed=7, **kwargs)
+    assert first == build_delay_rows(*delay_inputs, seed=7, **kwargs)
+    second = build_delay_rows(*delay_inputs, seed=8, **kwargs)
+    assert [row["delay_hours"] for row in first] != [row["delay_hours"] for row in second]
+    assert [{key: row[key] for key in FEATURES} for row in first] == [
+        {key: row[key] for key in FEATURES} for row in second
+    ]
+
+
+def test_model_beats_baseline_but_not_perfectly(delay_inputs):
+    rows = build_delay_rows(
+        *delay_inputs, destination=DEMO_NODES["port_b"], window_minutes=15, seed=7,
+    )
+    result = train_and_evaluate(*split_by_time(rows))
+    assert 0.01 < result["model_metrics"]["mae"] < result["baseline_metrics"]["mae"]
+
+
+def test_synthetic_label_adds_noise_and_clamps_at_zero():
+    row = _delay_row(0)
+    assert make_synthetic_label(row, 0.5) == pytest.approx(row["delay_hours"] + 0.5)
+    assert make_synthetic_label(row, -100) == 0
+
+
+def test_delay_rows_reject_missing_telemetry():
+    with pytest.raises(ValueError, match="matching telemetry event_id"):
+        build_delay_rows([], [_risk(0)], [], destination=DEMO_NODES["port_b"],
+                         window_minutes=15, seed=7)
+
+
+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), True])
+def test_delay_noise_validation(value):
+    with pytest.raises(ValueError, match="GEORISK_DELAY_NOISE_STD_HOURS"):
+        GeoRiskConfig(delay_noise_std_hours=value)
+    with pytest.raises(ValueError, match="GEORISK_DELAY_NOISE_STD_HOURS"):
+        GeoRiskConfig.from_env({"GEORISK_DELAY_NOISE_STD_HOURS": str(value)})
+    with pytest.raises(ValueError, match="noise_std_hours"):
+        build_delay_rows([], [], [], destination=DEMO_NODES["port_b"],
+                         window_minutes=15, seed=7, noise_std_hours=value)
+
+
+def test_delay_noise_setting_from_env():
+    assert GeoRiskConfig.from_env({}).delay_noise_std_hours == 0.25
+    assert GeoRiskConfig.from_env({"GEORISK_DELAY_NOISE_STD_HOURS": "0.5"}).delay_noise_std_hours == 0.5
+    assert GeoRiskConfig.from_env({"GEORISK_DELAY_NOISE_STD_HOURS": "0"}).delay_noise_std_hours == 0
 
 
 def test_mixed_polygon_and_multipolygon_alerts_round_trip(tmp_path):

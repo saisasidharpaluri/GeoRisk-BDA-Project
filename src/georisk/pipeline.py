@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from georisk.config import GeoRiskConfig
+from georisk.geo_demo import DEMO_NODES
 from georisk.logging_utils import configure_logging
 from georisk.ingestion.generator import write_jsonl
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
@@ -19,34 +20,13 @@ from georisk.route_dashboard.route_optimizer import (
     find_alternative_route,
 )
 from georisk.route_dashboard.edge_risk import score_graph
-from georisk.storage_analytics.delay_model import make_synthetic_label, split_by_time, train_and_evaluate
+from georisk.storage_analytics.delay_features import build_delay_rows
+from georisk.storage_analytics.delay_model import split_by_time, train_and_evaluate
 from georisk.storage_analytics.lake import density_summary, risk_summary, write_partitioned
 from georisk.operations import acceptance_checks, artifact_manifest
 
 
 logger = logging.getLogger(__name__)
-
-def _delay_rows(
-    risk_events: list[dict[str, Any]], density_metrics: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    density_by_cell = {
-        row["h3_index"]: row["unique_vessel_count"] for row in density_metrics
-    }
-    rows = []
-    for index, event in enumerate(risk_events):
-        hazards = event["matching_hazards"]
-        row = {
-            "event_time": event["event_time"],
-            "baseline_hours": 16.0,
-            "density": float(density_by_cell.get(event["h3_index"], 0)),
-            "hazard_severity": float(max((item["severity"] for item in hazards), default=0)),
-            "speed_knots": 14.0,
-            "route_distance_nm": 500.0 + index,
-        }
-        row["delay_hours"] = make_synthetic_label(row)
-        rows.append(row)
-    return rows
-
 
 def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
     """Run generation, processing, lake writes, model evaluation, and routing."""
@@ -85,8 +65,10 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
     logger.info("Lake datasets written", extra={"georisk": {
         "paths": lake_paths,
     }})
-    delay_rows = _delay_rows(
-        processed["risk_events"], processed["density_metrics"]
+    delay_rows = build_delay_rows(
+        events["telemetry"], processed["risk_events"], processed["density_metrics"],
+        destination=DEMO_NODES["port_b"], window_minutes=settings.density_window_minutes,
+        seed=settings.seed, noise_std_hours=settings.delay_noise_std_hours,
     )
     if len(delay_rows) < 2:
         raise ValueError("end-to-end run requires at least two telemetry-derived model rows")
@@ -136,6 +118,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "allowed_lateness_minutes": settings.allowed_lateness_minutes,
             "acceptance_required": settings.acceptance_required,
             "strict_validation": settings.strict_validation,
+            "delay_noise_std_hours": settings.delay_noise_std_hours,
         },
         "generation": {
             "generated": generation_stats.generated,
