@@ -144,6 +144,7 @@ def test_validate_report_detects_modified_parquet(tmp_path, monkeypatch):
     assert check["passed"] is False
     assert str(path) in check["detail"]
     monkeypatch.setenv("GEORISK_REPORT_PATH", str(config.report_path))
+    monkeypatch.setenv("GEORISK_ENV_FILE", str(tmp_path / "missing.env"))
     with pytest.raises(SystemExit) as exc:
         validate_cli()
     assert exc.value.code == 1

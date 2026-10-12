@@ -1,5 +1,12 @@
 # Member 2 - Spark streaming and spatial processing
 
+Use `georisk process --input-dir output/data --processed-dir output/processed`
+for local batch processing. H3 resolution, coverage, density window, lateness,
+and strict validation accept flags overriding the environment and `.env`.
+When PySpark imports, `georisk spark-stream` drains `GEORISK_STREAM_DIR` into
+`GEORISK_SPARK_OUTPUT_DIR` with `GEORISK_SPARK_CHECKPOINT_DIR`; `--watch` keeps
+the query running. The CLI awaits completion and stops its Spark session on exit.
+
 Own event validation, H3 conversion, active-hazard matching, risk events, and 15-minute corridor density using Spark Structured Streaming in AWS Glue.
 
 ## Starter modules

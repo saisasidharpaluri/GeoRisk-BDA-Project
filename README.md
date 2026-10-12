@@ -78,21 +78,21 @@ prerequisites also match Glue 5.0. No AWS deployment is performed.
 Generate deterministic fixtures and write the two logical streams as JSONL:
 
 ```powershell
-py -c "from georisk.ingestion.generator import generate_events, write_jsonl; write_jsonl(generate_events(seed=7, vessel_count=10), 'output/data')"
+georisk generate --seed 7 --vessel-count 10 --input-dir output/data
 ```
 
 The output files are `output/data/vessel-telemetry.jsonl` and
 `output/data/weather-alerts.jsonl`. Each run replaces those files. Use
 `replay_events()` with `publish_event()` and an injected Kinesis client for
 tests, or with the default client when AWS credentials and streams are
-configured.
+configured. For local file-stream batches, run `georisk replay --speed 60`.
 
 ## Phase 3 local processing
 
 Process the Phase 2 fixtures into validated risk and density outputs:
 
 ```powershell
-py -c "from georisk.processing.stream_job import run_streaming_job; run_streaming_job({'input_dir': 'output/data', 'output_dir': 'output/processed', 'resolution': 7})"
+georisk process --input-dir output/data --output-dir output/processed --resolution 7
 ```
 
 The processor writes `risk-events.jsonl` and `density-metrics.jsonl`. It
@@ -101,10 +101,11 @@ and deduplicates vessels by H3 cell and 15-minute event-time window.
 
 ## Phase 4 storage and analytics
 
-Write curated outputs to a local Parquet lake:
+Generate and process the scenario, then write raw and curated outputs to a local
+Parquet lake as part of the end-to-end run:
 
 ```powershell
-py -c "from georisk.storage_analytics.lake import write_dataset; import json; from pathlib import Path; records=[json.loads(line) for line in Path('output/processed/risk-events.jsonl').read_text().splitlines()]; write_dataset(records, 'output/lake', '2026-01-01', dataset_name='risk_events')"
+georisk run --lake-dir output/lake
 ```
 
 Datasets use the layout
@@ -120,7 +121,7 @@ Run the local dashboard after generating Phase 2 and Phase 3 outputs:
 
 ```powershell
 py -m pip install -e ".[dashboard]"
-streamlit run src/georisk/route_dashboard/dashboard.py
+georisk dashboard
 ```
 
 The dashboard displays freshness and explicit no-data states. Its route view
@@ -132,7 +133,7 @@ on the documented synthetic graph.
 Run every local stage and write a machine-readable report:
 
 ```powershell
-georisk-run
+georisk run
 ```
 
 The report is written to `output/reports/phase6-run.json` and includes
@@ -155,7 +156,7 @@ the density window at the latest telemetry time; `route.at_time` and
 Run the final acceptance checks against the persisted report:
 
 ```powershell
-georisk-validate
+georisk validate
 ```
 
 The report now includes deterministic SHA-256 artifact manifests and
@@ -174,6 +175,42 @@ pass. `dashboard_labels` checks simulation status, H3 resolution, and units;
 existing checks cover timestamps, Parquet outputs, and held-out model metrics.
 The guide's S3/Athena criterion is covered locally by Parquet/SQL tests; AWS
 deployment verification remains outside the local acceptance suite.
+
+## Unified local CLI
+
+After updating an existing checkout, reinstall the editable package with
+`.venv\Scripts\python -m pip install --no-deps -e .` to register
+the new `georisk` command. Use `georisk --help` or `georisk <command> --help`.
+
+| Command | Result |
+| --- | --- |
+| `georisk generate` | Replace scenario JSONL files in the configured input directory |
+| `georisk replay --speed 60` | Append atomic batches to `GEORISK_STREAM_DIR`; 0 disables pacing |
+| `georisk process` | Write risk, density, quarantine, and run metadata JSONL/JSON |
+| `georisk run` | Generate data and run the complete pipeline, lake, model, and acceptance |
+| `georisk validate --report-path output/reports/phase6-run.json` | Recheck report criteria and artifact hashes |
+| `georisk compare-resolutions` | Write `resolution-comparison.json` beside the configured report |
+| `georisk dashboard` | Launch Streamlit using the current Python environment |
+| `georisk spark-stream` | Drain available local stream batches; `--watch` keeps the stream running |
+
+`spark-stream` is offered only when PySpark imports; it requires the configured
+Spark/Java environment. Use `--stream-dir`, `--output-dir`, and `--checkpoint-dir`
+to isolate a stream run. Dashboard requires the `dashboard` extra.
+
+Configuration precedence is command flags, then shell environment, then `.env`,
+then defaults. Select another file with `--env-file path` or `GEORISK_ENV_FILE`.
+For example:
+
+```powershell
+georisk run --input-dir output/data/demo --processed-dir output/processed/demo --lake-dir output/lake/demo --report-path output/reports/demo.json --route-risk-penalty 9
+georisk dashboard --input-dir output/data/demo --processed-dir output/processed/demo --route-risk-penalty 9
+```
+
+Commands return 0 on success, 1 for rejected acceptance or operational errors,
+2 for argparse usage errors, and 130 when interrupted. Dashboard propagates
+Streamlit's exit status. `--no-acceptance-required` permits a run with rejected
+acceptance to exit 0; validation still exits 1. Existing `georisk-run`,
+`georisk-validate`, and `georisk-compare-resolutions` entry points remain available.
 
 ## Phase 8 deployment readiness
 

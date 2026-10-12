@@ -27,3 +27,7 @@ precedence. `load_env_file(path, override=False)` returns only applied keys;
 quotes are removed. Values are literal: no shell execution, interpolation, or
 inline-comment expansion. Malformed assignments raise a line-numbered error
 before any values are applied. Deployment commands retain their existing behavior.
+
+Every unified `georisk` subcommand uses the same loader. `--env-file` selects a
+file, and command-specific flags override both the shell and file values. Use
+`georisk <command> --help` to see the supported flags and their environment names.

@@ -14,6 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
+georisk = "georisk.cli:entry"
 georisk-run = "georisk.pipeline:run_cli"
 georisk-compare-resolutions = "georisk.analysis.resolution_comparison:comparison_cli"
 georisk-validate = "georisk.operations:validate_cli"

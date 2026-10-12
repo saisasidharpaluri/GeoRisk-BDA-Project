@@ -1,5 +1,11 @@
 # Member 1 - Ingestion and event contracts
 
+`georisk generate` writes the configured timed scenario to `GEORISK_INPUT_DIR`.
+`georisk replay --speed 60` reads those JSONL files and uses `FileStreamPublisher`
+to append batches under `GEORISK_STREAM_DIR`; `--speed 0` disables pacing.
+Use `--vessel-count`, `--duration-minutes`, and `--interval-seconds` when generating.
+Flags override shell settings and the selected `.env` file.
+
 Own synthetic event generation, repeatable replay, validation, and publishing to two Amazon Kinesis Data Streams: `vessel-telemetry` and `weather-alerts`.
 
 The demo geography is offshore Chennai in the Bay of Bengal. Shared coordinates,

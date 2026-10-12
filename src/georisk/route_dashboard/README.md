@@ -20,7 +20,7 @@ no-data states, and the route comparison. Run it with:
 
 ```powershell
 py -m pip install -e ".[dashboard]"
-streamlit run src/georisk/route_dashboard/dashboard.py
+georisk dashboard
 ```
 
 ## Handoff
@@ -53,3 +53,7 @@ values. `load_dashboard_data(root=None, input_dir=None, processed_dir=None)`
 lets explicit directories override the legacy `root/data` and `root/processed`
 layout. The pipeline and dashboard share `dashboard_route()`, scoring the same
 hazards and density at the latest telemetry timestamp with the selected penalty.
+
+`georisk dashboard` loads `.env` and passes flag overrides to Streamlit through
+the subprocess environment. It launches the installed dashboard module with the
+current Python interpreter, so it also works outside the repository directory.
