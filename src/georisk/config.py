@@ -82,6 +82,7 @@ class GeoRiskConfig:
     report_path: Path = Path("output/reports/phase6-run.json")
     route_risk_threshold: float = 0.5
     route_risk_penalty: float = 4.0
+    stale_after_minutes: int = 30
     evaluation_fraction: float = 0.2
     delay_noise_std_hours: float = 0.25
     delay_model: str = "linear"
@@ -152,6 +153,9 @@ class GeoRiskConfig:
             raise ValueError("GEORISK_RESOLUTION must be between 0 and 15")
         if not 0 <= self.route_risk_threshold <= 1:
             raise ValueError("GEORISK_ROUTE_RISK_THRESHOLD must be between 0 and 1")
+        if (not isinstance(self.stale_after_minutes, int) or isinstance(self.stale_after_minutes, bool)
+                or not 1 <= self.stale_after_minutes <= 10080):
+            raise ValueError("GEORISK_STALE_AFTER_MINUTES must be an integer from 1 to 10080")
         if self.route_risk_penalty < 0:
             raise ValueError("GEORISK_ROUTE_RISK_PENALTY cannot be negative")
         if not 0 < self.evaluation_fraction < 1:
@@ -191,6 +195,7 @@ class GeoRiskConfig:
             ),
             route_risk_threshold=_float(source, "GEORISK_ROUTE_RISK_THRESHOLD", 0.5),
             route_risk_penalty=_float(source, "GEORISK_ROUTE_RISK_PENALTY", 4.0),
+            stale_after_minutes=_integer(source, "GEORISK_STALE_AFTER_MINUTES", 30),
             evaluation_fraction=_float(source, "GEORISK_EVALUATION_FRACTION", 0.2),
             delay_noise_std_hours=_float(source, "GEORISK_DELAY_NOISE_STD_HOURS", 0.25),
             delay_model=source.get("GEORISK_DELAY_MODEL", "linear"),

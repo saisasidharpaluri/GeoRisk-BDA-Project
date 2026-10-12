@@ -57,3 +57,10 @@ hazards and density at the latest telemetry timestamp with the selected penalty.
 `georisk dashboard` loads `.env` and passes flag overrides to Streamlit through
 the subprocess environment. It launches the installed dashboard module with the
 current Python interpreter, so it also works outside the repository directory.
+
+`views.py` holds the dashboard's pure helpers, so the UI stays thin and every
+transformation is unit-tested: active alerts (latest revision, half-open
+validity), severity distribution, risk filters, density windows and adjacent
+window comparison, latest positions, delay summaries, route what-if alert sets,
+lane status, and run freshness. `GEORISK_STALE_AFTER_MINUTES` (default 30)
+sets when the last processing run is shown as stale.
