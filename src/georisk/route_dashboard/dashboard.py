@@ -12,7 +12,10 @@ from georisk.route_dashboard.edge_risk import score_graph
 from georisk.route_dashboard.route_optimizer import (
     demonstration_graph, demonstration_nodes, find_alternative_route,
 )
-from georisk.route_dashboard.views import active_alerts, latest_positions, latest_risk_by_vessel
+from georisk.route_dashboard.views import (
+    active_alerts, exposure_series, filter_risk_events, latest_positions, latest_risk_by_vessel,
+    risk_table_rows, severity_distribution,
+)
 
 MAP_LAYERS = (
     ("vessels", "Vessels"), ("hazards", "Hazard zones"), ("risk_cells", "Risk cells"),
@@ -232,6 +235,112 @@ def _render_map(
             '<p class="gr-hint">All map layers are hidden. Turn them on in the sidebar.</p>')
 
 
+def _short_time(value: str) -> str:
+    return value[11:16] if len(value) >= 16 else value
+
+
+def _render_kpis(
+    st: Any, *, alerts: list[dict[str, Any]], exposed: set[str], positions: list[dict[str, Any]],
+    data: dict[str, list[dict[str, Any]]], latest: str | None,
+) -> None:
+    risk_events = data["risk_events"]
+    ever_exposed = {row["vessel_id"] for row in risk_events if row.get("risk_alert")}
+    alerted = sum(bool(row.get("risk_alert")) for row in risk_events)
+    series = [row["exposed_vessels"] for row in exposure_series(risk_events)]
+    columns = st.columns(4)
+    columns[0].metric("Active alerts", len(alerts), border=True, height="stretch",
+                      help="Hazard alerts valid at the latest event time (latest revision).")
+    columns[1].metric(
+        "Vessels exposed now", f"{len(exposed)} / {len(positions)}", border=True, height="stretch",
+        chart_data=series or None, chart_type="area",
+        help=f"Latest position inside an active hazard. {len(ever_exposed)} vessels were "
+             "exposed at some point; the sparkline tracks exposure over time.",
+    )
+    columns[2].metric("Alerted positions", f"{alerted} / {len(risk_events)}", border=True, height="stretch",
+                      help="Telemetry positions matched to an active hazard cell.")
+    columns[3].metric("Latest event (UTC)", _short_time(latest) if latest else "—", border=True, height="stretch",
+                      help=f"{latest} UTC" if latest else "No events loaded yet.")
+
+
+def _render_risk_panel(st: Any, risk_events: list[dict[str, Any]], settings: GeoRiskConfig) -> None:
+    st.subheader("Risk summary")
+    st.caption(f"Positions matched to active hazards on the H3 grid (res {settings.resolution}, "
+               f"{settings.coverage_mode} coverage). Severity runs from 1 (minor) to 5 (severe).")
+    if not risk_events:
+        st.info("No risk events yet. Run `georisk run` to process telemetry against hazard alerts.")
+        return
+    distribution = severity_distribution(risk_events)
+    chart_column, table_column = st.columns([1, 2.4], gap="large")
+    with chart_column:
+        st.bar_chart(
+            {"Severity": [str(level) for level in range(1, 6)],
+             "Alerted positions": [distribution.get(level, 0) for level in range(1, 6)]},
+            x="Severity", y="Alerted positions", color="#A8166F", height=280, sort=False,
+        )
+    with table_column:
+        hazard_types = sorted({hazard["hazard_type"] for event in risk_events
+                               for hazard in event.get("matching_hazards") or []})
+        times = sorted({event["event_time"] for event in risk_events})
+        type_column, severity_column, time_column = st.columns([1.3, 1, 1.5])
+        chosen_types = type_column.multiselect(
+            "Hazard type", hazard_types, placeholder="All hazard types", key="risk_types",
+            format_func=lambda kind: kind.replace("_", " "),
+        )
+        min_severity = severity_column.slider("Minimum severity", 1, 5, 1, key="risk_severity")
+        start, end = (times[0], times[-1]) if times else (None, None)
+        if len(times) > 1:
+            start, end = time_column.select_slider(
+                "Event time (UTC)", times, value=(times[0], times[-1]), key="risk_time",
+                format_func=_short_time,
+            )
+        filtered = filter_risk_events(risk_events, hazard_types=chosen_types or None,
+                                      min_severity=min_severity, start=start, end=end)
+        alerted_total = sum(bool(event.get("risk_alert")) for event in risk_events)
+        if filtered:
+            st.dataframe(
+                risk_table_rows(filtered), width="stretch", hide_index=True, height=320,
+                column_order=("event_time", "vessel_id", "hazards", "max_severity", "h3_index",
+                              "coverage_mode", "h3_resolution", "latitude", "longitude"),
+                column_config={
+                    "event_time": st.column_config.TextColumn("Event time (UTC)"),
+                    "vessel_id": st.column_config.TextColumn("Vessel"),
+                    "hazards": st.column_config.TextColumn("Matched hazards"),
+                    "max_severity": st.column_config.ProgressColumn(
+                        "Severity", min_value=0, max_value=5, format="%d"),
+                    "h3_index": st.column_config.TextColumn("H3 cell"),
+                    "coverage_mode": st.column_config.TextColumn("Coverage"),
+                    "h3_resolution": st.column_config.NumberColumn("Res", format="%d"),
+                    "latitude": st.column_config.NumberColumn("Lat (°)", format="%.4f"),
+                    "longitude": st.column_config.NumberColumn("Lon (°)", format="%.4f"),
+                },
+            )
+            st.caption(f"Showing {len(filtered)} of {alerted_total} alerted positions.")
+        else:
+            st.info("No alerted positions match these filters. Lower the minimum severity, "
+                    "widen the time range, or clear the hazard types.")
+
+
+def _render_route_panel(st: Any, route: dict[str, Any] | None, route_error: str | None) -> None:
+    st.subheader("Route comparison")
+    if route_error:
+        st.warning(route_error)
+        return
+    if route is None:
+        st.info("No vessel telemetry is available for route scoring.")
+        return
+    st.write(
+        {
+            "baseline_path": " → ".join(route["baseline"]["path"]),
+            "alternative_path": " → ".join(route["alternative"]["path"]),
+            "baseline_hours": route["baseline"]["travel_hours"],
+            "alternative_hours": route["alternative"]["travel_hours"],
+            "risk_difference": route["risk_delta"],
+            "synthetic_demo": route["synthetic_demo"],
+        }
+    )
+    st.write(route["explanation"])
+
+
 def main() -> None:
     """Render the local dashboard; cloud query adapters can replace the loader."""
     try:
@@ -256,22 +365,16 @@ def main() -> None:
     data = load_dashboard_data(input_dir=input_dir, processed_dir=processed_dir)
     summary = dashboard_summary(data, resolution=settings.resolution)
 
-    columns = st.columns(5)
-    columns[0].metric("Telemetry events", summary["telemetry_count"])
-    columns[1].metric("Weather alerts", summary["active_alert_count"])
-    columns[2].metric("Risk events", summary["risk_event_count"])
-    columns[3].metric("Exposed vessels", summary["exposed_vessel_count"])
-    columns[4].metric("Density cells", summary["density_cell_count"])
-    if summary["latest_event_time"]:
-        st.caption(f"Latest event time: {summary['latest_event_time']} (UTC)")
-    else:
-        st.warning("No current data is available. Start the Phase 2 replay first.")
-
     at_time = summary["latest_event_time"]
     alerts = active_alerts(data["weather_alerts"], at_time) if at_time else []
     positions = latest_positions(data["telemetry"])
     latest_risk = latest_risk_by_vessel(data["risk_events"])
     exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
+
+    _render_kpis(st, alerts=alerts, exposed=exposed, positions=positions, data=data, latest=at_time)
+    if not summary["has_data"]:
+        st.warning("No current data is available. Start the Phase 2 replay first.")
+
     try:
         route = dashboard_route(data, resolution=settings.resolution,
                                 coverage_mode=settings.coverage_mode,
@@ -283,37 +386,17 @@ def main() -> None:
                     if at_time and row["window_start"] <= at_time < row["window_end"]]
 
     map_column, inspect_column = st.columns([2.6, 1], gap="medium")
+    risk_tab, route_tab = st.tabs(["Risk", "Route"])
+    with risk_tab:
+        _render_risk_panel(st, data["risk_events"], settings)
+    with route_tab:
+        _render_route_panel(st, route, route_error)
     with map_column:
         _render_map(st, layers, positions=positions, exposed=exposed, alerts=alerts,
                     risk_events=data["risk_events"], density_rows=density_rows, route=route)
     with inspect_column:
         with st.container(height=640, border=True):
             _render_inspector(st, positions, latest_risk, alerts, at_time, settings)
-
-    st.subheader("Risk events")
-    if data["risk_events"]:
-        st.dataframe(data["risk_events"], width="stretch")
-    else:
-        st.info("No risk events are available.")
-
-    st.subheader("Route comparison")
-    if route_error:
-        st.warning(route_error)
-        return
-    if route is None:
-        st.info("No vessel telemetry is available for route scoring.")
-        return
-    st.write(
-        {
-            "baseline_path": " → ".join(route["baseline"]["path"]),
-            "alternative_path": " → ".join(route["alternative"]["path"]),
-            "baseline_hours": route["baseline"]["travel_hours"],
-            "alternative_hours": route["alternative"]["travel_hours"],
-            "risk_difference": route["risk_delta"],
-            "synthetic_demo": route["synthetic_demo"],
-        }
-    )
-    st.write(route["explanation"])
 
 
 if __name__ == "__main__":

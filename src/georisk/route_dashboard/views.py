@@ -281,3 +281,14 @@ def lane_status(
             })
     return rows
 
+
+
+def exposure_series(risk_events: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Count distinct vessels inside an active hazard at each event time."""
+    exposed: dict[str, set[str]] = {}
+    for event in risk_events:
+        vessels = exposed.setdefault(event["event_time"], set())
+        if event.get("risk_alert"):
+            vessels.add(event["vessel_id"])
+    return [{"event_time": time, "exposed_vessels": len(exposed[time])}
+            for time in sorted(exposed, key=_utc)]

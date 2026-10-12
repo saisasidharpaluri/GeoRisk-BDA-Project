@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from georisk.route_dashboard.views import (
-    ROUTE_SCENARIOS, active_alerts, compare_adjacent_windows, delay_mae,
+    ROUTE_SCENARIOS, active_alerts, exposure_series, compare_adjacent_windows, delay_mae,
     density_for_window, density_windows, filter_risk_events, freshness, lane_status,
     latest_delay_estimates, latest_positions, risk_table_rows, route_scenario_alerts,
     severity_distribution,
@@ -174,6 +174,18 @@ def test_close_inner_lane_forces_detour():
     assert status["port_a → outer_lane"]["status"] == "open"
     assert status["port_a → outer_lane"]["used_by"] == "alternative"
     assert status["port_a → chokepoint"]["used_by"] == "baseline"
+
+
+def test_exposure_series_counts_distinct_vessels_per_time():
+    events = [_risk("a", "2026-01-01T12:05:00Z", [("storm", 3)]),
+              _risk("a", "2026-01-01T12:05:00Z", [("storm", 3)]),
+              _risk("b", "2026-01-01T12:00:00Z"),
+              _risk("b", "2026-01-01T12:05:00Z", [("storm", 3)])]
+    assert exposure_series(events) == [
+        {"event_time": "2026-01-01T12:00:00Z", "exposed_vessels": 0},
+        {"event_time": "2026-01-01T12:05:00Z", "exposed_vessels": 2},
+    ]
+    assert exposure_series([]) == []
 
 
 def test_stale_after_minutes_setting():

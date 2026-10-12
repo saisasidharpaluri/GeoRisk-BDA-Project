@@ -78,3 +78,9 @@ by default) and a legend that lists only the visible layers. Clicking a vessel
 or hazard zone selects it in the "Inspect" panel, which shows the vessel's
 latest position, risk flag, and matched hazards, or the alert's type, severity,
 validity, and H3 cell count. No-data states are explicit.
+
+The KPI row shows active alerts at the latest event time, vessels exposed now
+(with an exposure sparkline), alerted positions, and the latest event time in
+UTC. The "Risk" tab charts alerted positions by severity and filters the risk
+table by hazard type, minimum severity (1–5), and event-time range; the table
+includes `coverage_mode` and `h3_resolution`.
