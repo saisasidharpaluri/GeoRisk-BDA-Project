@@ -115,6 +115,37 @@ def test_unknown_fields_are_rejected():
         validate_event("vessel_telemetry", event)
 
 
+def test_risk_event_accepts_new_optional_fields():
+    event = dict(_risk_event(), event_id="telemetry-1", latitude=12.5,
+                 longitude=78.25, coverage_mode="center")
+    validate_event("risk_event", event)
+    event["coverage_mode"] = "overlap"
+    validate_event("risk_event", event)
+
+
+def test_risk_event_rejects_unknown_coverage_mode():
+    with pytest.raises(ContractValidationError, match="coverage_mode"):
+        validate_event("risk_event", dict(_risk_event(), coverage_mode="unknown"))
+
+
+def test_matching_hazard_requires_alert_id():
+    event = _risk_event()
+    del event["matching_hazards"][0]["alert_id"]
+    with pytest.raises(ContractValidationError, match="alert_id"):
+        validate_event("risk_event", event)
+
+
+@pytest.mark.parametrize("hazard", [
+    {"alert_id": "a"}, {"alert_id": "", "severity": 4},
+    {"alert_id": "a", "severity": 0}, {"alert_id": "a", "severity": 6},
+    {"alert_id": "a", "severity": 4, "unknown": 1},
+    {"alert_id": "a", "severity": 4, "valid_from": "bad"},
+])
+def test_matching_hazard_fields_are_validated(hazard):
+    with pytest.raises(ContractValidationError):
+        validate_event("risk_event", dict(_risk_event(), matching_hazards=[hazard]))
+
+
 def test_missing_required_fields_are_rejected():
     event = _alert()
     del event["valid_until"]

@@ -11,3 +11,9 @@ GeoJSON longitude/latitude order and must contain at least one ring.
 
 Validation reuses one cached validator per contract. The public `load_schema()`
 helper remains uncached and returns a freshly loaded schema on each call.
+
+## v1 changelog
+
+- 2026-10: additive optional fields on risk_event (no version bump): event_id,
+  latitude, longitude, and coverage_mode (center or overlap). Hazard matches
+  require alert_id and severity (1–5); only documented match fields are accepted.

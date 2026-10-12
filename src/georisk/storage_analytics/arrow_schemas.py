@@ -23,6 +23,8 @@ ARROW_SCHEMAS: dict[str, pa.Schema] = {
     ]),
     "risk_events": pa.schema([
         ("schema_version", pa.int32()), ("event_time", pa.string()),
+        ("event_id", pa.string()), ("latitude", pa.float64()),
+        ("longitude", pa.float64()), ("coverage_mode", pa.string()),
         ("vessel_id", pa.string()), ("h3_index", pa.string()),
         ("h3_resolution", pa.int32()), ("risk_alert", pa.bool_()),
         ("matching_hazards", pa.list_(pa.struct([
