@@ -87,8 +87,11 @@ def test_density_summary_sql_matches_python_summary(sql_lake):
     assert _query(connection, "density_summary.sql") == expected
 
 
-@pytest.mark.parametrize("query", ["risk_summary.sql", "density_summary.sql"])
-def test_summary_sql_filters_date_partitions(sql_lake, query):
+@pytest.mark.parametrize("query", [
+    "risk_summary.sql", "density_summary.sql", "top_congested_cells.sql",
+    "exposure_by_vessel.sql", "hourly_alert_counts.sql",
+])
+def test_sql_filters_date_partitions(sql_lake, query):
     lake, connection = sql_lake
     expected = _query(connection, query)
     write_partitioned([
@@ -100,3 +103,49 @@ def test_summary_sql_filters_date_partitions(sql_lake, query):
         _density("2026-02-01T00:00:00Z", "2026-02-01T00:15:00Z", "87754e649ffffff", 999),
     ], lake, dataset_name="density_metrics")
     assert _query(connection, query) == expected
+
+
+def test_top_congested_cells_sql(sql_lake):
+    _, connection = sql_lake
+    assert _query(connection, "top_congested_cells.sql") == [
+        {"h3_index": "87754e649ffffff", "peak_unique_vessel_count": 7},
+        {"h3_index": "87754e64bffffff", "peak_unique_vessel_count": 7},
+        {"h3_index": "87754e648ffffff", "peak_unique_vessel_count": 4},
+    ]
+
+
+def test_top_congested_cells_sql_limits_to_twenty(sql_lake):
+    lake, connection = sql_lake
+    write_partitioned([
+        _density("2026-01-03T00:00:00Z", "2026-01-03T00:15:00Z", f"cell-{index:02d}", 10 + index)
+        for index in range(25)
+    ], lake, dataset_name="density_metrics", batch_id="more-cells")
+    assert _query(connection, "top_congested_cells.sql") == [
+        {"h3_index": f"cell-{index:02d}", "peak_unique_vessel_count": 10 + index}
+        for index in range(24, 4, -1)
+    ]
+
+
+def test_exposure_by_vessel_sql(sql_lake):
+    _, connection = sql_lake
+    assert _query(connection, "exposure_by_vessel.sql") == [
+        {
+            "vessel_id": "vessel-a", "alerted_event_count": 3,
+            "first_alerted_event_time": "2026-01-01T12:00:00Z",
+            "last_alerted_event_time": "2026-01-31T23:59:00Z",
+        },
+        {
+            "vessel_id": "vessel-b", "alerted_event_count": 1,
+            "first_alerted_event_time": "2026-01-02T00:00:00Z",
+            "last_alerted_event_time": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+
+def test_hourly_alert_counts_sql(sql_lake):
+    _, connection = sql_lake
+    assert _query(connection, "hourly_alert_counts.sql") == [
+        {"hour_bucket": "2026-01-01T12", "alerted_event_count": 2},
+        {"hour_bucket": "2026-01-02T00", "alerted_event_count": 1},
+        {"hour_bucket": "2026-01-31T23", "alerted_event_count": 1},
+    ]

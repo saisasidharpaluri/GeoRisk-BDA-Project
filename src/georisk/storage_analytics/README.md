@@ -6,7 +6,8 @@ Own the S3 data lake, Parquet layout, Glue Data Catalog tables, Athena examples,
 
 - `lake.py`: write raw and processed datasets to S3 and register their layout.
 - `delay_model.py`: train and evaluate a delay model on synthetic history.
-- `sql/`: Athena queries for risk, vessel density, and route comparisons.
+- `sql/`: portable Athena/Trino and DuckDB queries for risk summaries, density,
+  congested cells, vessel exposure, and hourly alert counts (see `sql/README.md`).
 
 Partition by event date; keep H3 IDs as queryable columns rather than high-cardinality partitions. Make training/evaluation splits time-based and compare the model with a simple mean baseline. Document how synthetic labels are generated.
 
