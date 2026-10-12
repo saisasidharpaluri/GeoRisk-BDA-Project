@@ -283,3 +283,10 @@ Ruff's pinned check and format versions. AWS-owned `deployment.py` and
 `lake.py` retains its existing line length. Mypy checks all source modules,
 allowing missing third-party stubs. Tests guard behavior through these
 mechanical cleanups; optional dependencies have explicit skip reasons.
+
+## Repository status
+
+See [CHANGELOG.md](CHANGELOG.md) for changes and repository decisions. Prompt
+notes and the guide retain their current locations. `S3_BUCKET` remains in the
+example environment for AWS-team coordination. The project is currently
+unlicensed; no license grant is provided.
