@@ -133,6 +133,7 @@ def generate_events(
 
     for alert in alerts:
         validate_event("weather_alert", alert)
+    telemetry.sort(key=lambda event: (event["event_time"], event["vessel_id"]))
     return {"telemetry": telemetry, "weather_alerts": alerts}
 
 

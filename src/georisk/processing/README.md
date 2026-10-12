@@ -41,3 +41,14 @@ Density windows default to 15 minutes. Set GEORISK_DENSITY_WINDOW_MINUTES
 (or `window_minutes` in the processor/runner) to an integer from 1 to 1440
 that divides 1440. Windows are UTC epoch-aligned, half-open intervals;
 60- and 120-minute windows therefore group correctly across hour boundaries.
+
+Telemetry is evaluated in input (arrival) order. After validation and event-ID
+deduplication, events older than `max_event_time - allowed_lateness` are
+quarantined with `reason="late_event"` and excluded from risk and density.
+Events exactly on the watermark are accepted. This policy also applies with
+strict validation enabled. Invalid inputs and duplicates do not advance time.
+GEORISK_ALLOWED_LATENESS_MINUTES defaults to 10 (integer range 0..1440).
+Stats include `late_dropped`, `max_event_time`, and `watermark` (UTC Z, or null
+without accepted telemetry). Watermark state is local to each batch. Accepted
+risk output is sorted by event time, vessel ID, and event ID; density output
+is sorted by window and cell. Sorting occurs after arrival-order decisions.

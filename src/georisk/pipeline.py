@@ -64,6 +64,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "resolution": settings.resolution,
             "coverage_mode": settings.coverage_mode,
             "window_minutes": settings.density_window_minutes,
+            "allowed_lateness_minutes": settings.allowed_lateness_minutes,
             "strict": settings.strict_validation,
         }
     )
@@ -114,6 +115,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "resolution": settings.resolution,
             "coverage_mode": settings.coverage_mode,
             "window_minutes": settings.density_window_minutes,
+            "allowed_lateness_minutes": settings.allowed_lateness_minutes,
             "event_date": event_date,
             "acceptance_required": settings.acceptance_required,
             "strict_validation": settings.strict_validation,

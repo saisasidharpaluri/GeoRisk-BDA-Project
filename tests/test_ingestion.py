@@ -173,3 +173,10 @@ def test_kinesis_publisher_rejects_invalid_stream_and_event():
     with pytest.raises(ContractValidationError):
         publish_event("vessel-telemetry", event, client=client)
     assert client.calls == []
+
+
+def test_generator_telemetry_is_time_ordered():
+    events = generate_events(7, 5, telemetry_points=6)["telemetry"]
+    keys = [(event["event_time"], event["vessel_id"]) for event in events]
+    assert keys == sorted(keys)
+    assert events[0]["vessel_id"] == "vessel-00000"

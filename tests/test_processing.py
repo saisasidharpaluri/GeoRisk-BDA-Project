@@ -405,3 +405,65 @@ def test_multi_hour_window_uses_epoch_floor():
     metric = process_events([_telemetry("v", 12, 78, 95)], [], window_minutes=120)["density_metrics"][0]
     assert metric["window_start"] == _timestamp(0)
     assert metric["window_end"] == _timestamp(120)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_late_event_quarantined(strict):
+    result = process_events([
+        _telemetry("new", 12, 78, 30), _telemetry("old", 12, 78, 0),
+    ], [], allowed_lateness_minutes=10, strict=strict)
+    assert [e["vessel_id"] for e in result["risk_events"]] == ["new"]
+    assert result["quarantine"][0]["reason"] == "late_event"
+    assert result["stats"]["late_dropped"] == 1
+    assert result["stats"]["quarantined"] == 1
+    assert result["stats"]["max_event_time"] == _timestamp(30)
+    assert result["stats"]["watermark"] == _timestamp(20)
+    assert len(result["density_metrics"]) == 1
+    assert result["density_metrics"][0]["window_start"] == _timestamp(30)
+
+
+def test_out_of_order_within_lateness_processed():
+    result = process_events([
+        _telemetry("new", 12, 78, 30), _telemetry("old", 12, 78, 0),
+    ], [], allowed_lateness_minutes=60)
+    assert [e["event_time"] for e in result["risk_events"]] == [_timestamp(0), _timestamp(30)]
+    assert result["stats"]["late_dropped"] == 0
+    assert result["stats"]["watermark"] == _timestamp(-30)
+    assert not result["quarantine"]
+
+
+@pytest.mark.parametrize("lateness", [0, 10])
+def test_event_exactly_at_watermark_is_accepted(lateness):
+    result = process_events([
+        _telemetry("first", 12, 78, 30), _telemetry("boundary", 12, 78, 30-lateness),
+    ], [], allowed_lateness_minutes=lateness)
+    assert len(result["risk_events"]) == 2
+    assert result["stats"]["late_dropped"] == 0
+
+
+def test_empty_batch_has_no_watermark():
+    result = process_events([], [_alert()])
+    assert result["stats"]["watermark"] is None
+    assert result["stats"]["max_event_time"] is None
+
+
+@pytest.mark.parametrize("minutes", [-1, 1441, True, 1.5])
+def test_invalid_lateness_rejected(minutes):
+    from georisk.config import GeoRiskConfig
+
+    with pytest.raises(ValueError, match="allowed_lateness_minutes"):
+        process_events([], [], allowed_lateness_minutes=minutes)
+    with pytest.raises(ValueError, match="GEORISK_ALLOWED_LATENESS_MINUTES"):
+        GeoRiskConfig(allowed_lateness_minutes=minutes)
+
+
+def test_duplicate_or_invalid_future_event_does_not_advance_watermark():
+    first = _telemetry("first", 12, 78)
+    result = process_events([
+        first, dict(first, event_time=_timestamp(60)),
+        _telemetry("invalid", 100, 78, 60), _telemetry("next", 12, 78, 5),
+    ], [])
+    assert result["stats"]["watermark"] == _timestamp(-5)
+    assert result["stats"]["duplicates_dropped"] == 1
+    assert result["stats"]["late_dropped"] == 0
+    assert len(result["risk_events"]) == 2

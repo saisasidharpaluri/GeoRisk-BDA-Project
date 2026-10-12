@@ -67,6 +67,7 @@ def process_events(
     strict: bool = False,
     coverage_mode: str = DEFAULT_COVERAGE_MODE,
     window_minutes: int = WINDOW_MINUTES,
+    allowed_lateness_minutes: int = 10,
 ) -> dict[str, Any]:
     """Create risk events and unique-vessel density metrics from one batch."""
     if not isinstance(strict, bool):
@@ -76,12 +77,21 @@ def process_events(
         or not 1 <= window_minutes <= 1440 or 1440 % window_minutes != 0
     ):
         raise ValueError("window_minutes must be 1..1440 and divide 1440")
+    if (
+        not isinstance(allowed_lateness_minutes, int)
+        or isinstance(allowed_lateness_minutes, bool)
+        or not 0 <= allowed_lateness_minutes <= 1440
+    ):
+        raise ValueError("allowed_lateness_minutes must be an integer from 0 to 1440")
     _validate_resolution(resolution)
     if coverage_mode not in COVERAGE_MODES:
         raise ValueError("coverage_mode must be center or overlap")
     quarantine = []
     stats = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
     stats["duplicates_dropped"] = 0
+    stats["late_dropped"] = 0
+    max_event_time: datetime | None = None
+    allowed_lateness = timedelta(minutes=allowed_lateness_minutes)
     alert_records = []
     for alert in alerts:
         stats["alerts_in"] += 1
@@ -131,6 +141,14 @@ def process_events(
             continue
         seen_event_ids.add(event["event_id"])
         event_time = _parse_utc(event["event_time"])
+        if max_event_time is not None and event_time < max_event_time - allowed_lateness:
+            stats["late_dropped"] += 1
+            quarantine.append(_quarantine_entry(
+                "vessel_telemetry", "late_event", event,
+                ValueError(f"event_time precedes watermark {_timestamp(max_event_time - allowed_lateness)}"),
+            ))
+            continue
+        max_event_time = max(max_event_time, event_time) if max_event_time else event_time
         cell = point_to_cell(event["latitude"], event["longitude"], resolution)
         matches = _matching_hazards(cell, event_time, coverage)
         risk_events.append(
@@ -171,6 +189,9 @@ def process_events(
         validate_event("risk_event", event)
     for metric in density_metrics:
         validate_event("density_metric", metric)
+    risk_events.sort(key=lambda event: (_parse_utc(event["event_time"]), event["vessel_id"], event["event_id"]))
+    stats["max_event_time"] = _timestamp(max_event_time) if max_event_time else None
+    stats["watermark"] = _timestamp(max_event_time - allowed_lateness) if max_event_time else None
     stats["quarantined"] = len(quarantine)
     return {
         "risk_events": risk_events, "density_metrics": density_metrics,
@@ -251,6 +272,7 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
         telemetry, alerts, resolution=resolution, strict=strict,
         coverage_mode=config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
         window_minutes=config.get("window_minutes", WINDOW_MINUTES),
+        allowed_lateness_minutes=config.get("allowed_lateness_minutes", 10),
     )
     for entry in quarantine:
         key = "telemetry_in" if entry["contract"] == "vessel_telemetry" else "alerts_in"

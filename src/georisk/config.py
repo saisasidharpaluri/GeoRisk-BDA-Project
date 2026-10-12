@@ -43,6 +43,7 @@ class GeoRiskConfig:
     resolution: int = 7
     coverage_mode: str = "overlap"
     density_window_minutes: int = 15
+    allowed_lateness_minutes: int = 10
     input_dir: Path = Path("output/data")
     processed_dir: Path = Path("output/processed")
     lake_dir: Path = Path("output/lake")
@@ -64,6 +65,12 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.allowed_lateness_minutes, int)
+            or isinstance(self.allowed_lateness_minutes, bool)
+            or not 0 <= self.allowed_lateness_minutes <= 1440
+        ):
+            raise ValueError("GEORISK_ALLOWED_LATENESS_MINUTES must be an integer from 0 to 1440")
         if (
             not isinstance(self.density_window_minutes, int)
             or isinstance(self.density_window_minutes, bool)
@@ -103,6 +110,7 @@ class GeoRiskConfig:
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),
             coverage_mode=source.get("GEORISK_H3_COVERAGE_MODE", "overlap"),
             density_window_minutes=_integer(source, "GEORISK_DENSITY_WINDOW_MINUTES", 15),
+            allowed_lateness_minutes=_integer(source, "GEORISK_ALLOWED_LATENESS_MINUTES", 10),
             input_dir=Path(source.get("GEORISK_INPUT_DIR", "output/data")),
             processed_dir=Path(source.get("GEORISK_OUTPUT_DIR", "output/processed")),
             lake_dir=Path(source.get("GEORISK_LAKE_DIR", "output/lake")),
