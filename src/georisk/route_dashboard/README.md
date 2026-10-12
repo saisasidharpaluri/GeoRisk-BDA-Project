@@ -94,3 +94,11 @@ latest predicted delay, the mean baseline, and the error, all in hours, with
 model vs baseline MAE on held-out rows. "Demo mode: show synthetic ground
 truth" adds the synthetic label column. The panel is labelled as a synthetic
 demonstration and shows a no-data message when the file is missing.
+
+The sidebar "Route what-if" group holds the hazard scenario ("As generated",
+"No hazards", or "Close inner lane", which adds a synthetic severity-5 closure
+at the chokepoint), the risk threshold, and the penalty, all defaulting to the
+configured values. `dashboard_route(..., alerts=...)` scores the graph with the
+scenario's alerts. The "Route" tab shows the explanation, a baseline vs
+alternative table (path, hours, risk, total cost), and lane status with risk
+drivers; the map's hazard and route layers follow the same scenario.

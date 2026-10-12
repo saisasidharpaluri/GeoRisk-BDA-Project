@@ -13,10 +13,10 @@ from georisk.route_dashboard.route_optimizer import (
     demonstration_graph, demonstration_nodes, find_alternative_route,
 )
 from georisk.route_dashboard.views import (
-    active_alerts, compare_adjacent_windows, delay_mae, density_for_window, density_windows,
-    exposure_series, filter_risk_events, latest_delay_estimates, latest_positions,
-    latest_risk_by_vessel,
-    risk_table_rows, severity_distribution,
+    ROUTE_SCENARIOS, active_alerts, compare_adjacent_windows, delay_mae, density_for_window,
+    density_windows, exposure_series, filter_risk_events, lane_status, latest_delay_estimates,
+    latest_positions, latest_risk_by_vessel, risk_table_rows, route_scenario_alerts,
+    severity_distribution,
 )
 
 MAP_LAYERS = (
@@ -121,14 +121,18 @@ def dashboard_summary(data: dict[str, list[dict[str, Any]]], *, resolution: int 
 
 def dashboard_route(
     data: dict[str, list[dict[str, Any]]], *, resolution: int, coverage_mode: str,
-    risk_threshold: float, risk_penalty: float,
+    risk_threshold: float, risk_penalty: float, alerts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    """Score the demo graph at the latest telemetry time for the UI and report."""
+    """Score the demo graph at the latest telemetry time for the UI and report.
+
+    ``alerts`` replaces the loaded weather alerts, for what-if scenarios.
+    """
     if not data["telemetry"]:
         return None
     at_time = max(event["event_time"] for event in data["telemetry"])
     graph = score_graph(
-        demonstration_graph(), demonstration_nodes(), data["weather_alerts"],
+        demonstration_graph(), demonstration_nodes(),
+        data["weather_alerts"] if alerts is None else alerts,
         data["density_metrics"], at_time=at_time, resolution=resolution,
         coverage_mode=coverage_mode,
     )
@@ -425,25 +429,58 @@ def _render_delay_panel(st: Any, estimates: list[dict[str, Any]]) -> None:
     )
 
 
-def _render_route_panel(st: Any, route: dict[str, Any] | None, route_error: str | None) -> None:
+def _path_label(path: list[str]) -> str:
+    from georisk.route_dashboard.map_layers import NODE_LABELS
+
+    return " → ".join(NODE_LABELS.get(node, node) for node in path)
+
+
+def _render_route_panel(
+    st: Any, route: dict[str, Any] | None, route_error: str | None, scenario: str,
+) -> None:
     st.subheader("Route comparison")
+    st.caption(f"Scenario: {scenario}. Lanes riskier than the threshold are closed to the "
+               "alternative; total cost = hours + penalty × risk. Synthetic demonstration.")
     if route_error:
-        st.warning(route_error)
+        st.warning(f"{route_error}. Raise the risk threshold or choose another scenario.")
         return
     if route is None:
-        st.info("No vessel telemetry is available for route scoring.")
+        st.info("No vessel telemetry is available for route scoring. Run `georisk run` first.")
         return
-    st.write(
-        {
-            "baseline_path": " → ".join(route["baseline"]["path"]),
-            "alternative_path": " → ".join(route["alternative"]["path"]),
-            "baseline_hours": route["baseline"]["travel_hours"],
-            "alternative_hours": route["alternative"]["travel_hours"],
-            "risk_difference": route["risk_delta"],
-            "synthetic_demo": route["synthetic_demo"],
-        }
+    if route["route_changed"]:
+        st.warning(route["explanation"], icon=":material/alt_route:")
+    else:
+        st.success(route["explanation"], icon=":material/check_circle:")
+    penalty = route["risk_penalty"]
+    legs = {name: route[name] for name in ("baseline", "alternative")}
+    st.table({
+        "": ["Path", "Travel time (h)", "Total risk", f"Total cost (h + {penalty:g} × risk)"],
+        "Baseline · fastest": [
+            _path_label(legs["baseline"]["path"]), f"{legs['baseline']['travel_hours']:.2f}",
+            f"{legs['baseline']['risk_score']:.2f}",
+            f"{legs['baseline']['travel_hours'] + penalty * legs['baseline']['risk_score']:.2f}",
+        ],
+        "Alternative · risk-aware": [
+            _path_label(legs["alternative"]["path"]), f"{legs['alternative']['travel_hours']:.2f}",
+            f"{legs['alternative']['risk_score']:.2f}",
+            f"{legs['alternative']['travel_hours'] + penalty * legs['alternative']['risk_score']:.2f}",
+        ],
+    }, hide_index=True)
+    st.markdown(f"**Lane status at {route['at_time']} UTC**")
+    st.dataframe(
+        lane_status(route["edge_scores"], route), width="stretch", hide_index=True,
+        column_config={
+            "lane": st.column_config.TextColumn("Lane"),
+            "distance_nm": st.column_config.NumberColumn("Distance (nm)", format="%.1f"),
+            "travel_hours": st.column_config.NumberColumn("Hours", format="%.2f"),
+            "risk": st.column_config.ProgressColumn("Risk", min_value=0.0, max_value=1.0,
+                                                    format="%.2f"),
+            "risk_detail": st.column_config.TextColumn(
+                "Risk drivers", help="Max hazard severity (alert IDs) and max vessel density."),
+            "status": st.column_config.TextColumn("Status"),
+            "used_by": st.column_config.TextColumn("Used by"),
+        },
     )
-    st.write(route["explanation"])
 
 
 def main() -> None:
@@ -462,8 +499,18 @@ def main() -> None:
     st.caption("Synthetic demonstration data | H3 candidate risk screen")
     input_dir = st.sidebar.text_input("Input directory", str(settings.input_dir))
     processed_dir = st.sidebar.text_input("Processed directory", str(settings.processed_dir))
-    threshold = st.sidebar.slider("Route risk threshold", 0.0, 1.0, settings.route_risk_threshold, 0.05)
-    penalty = st.sidebar.number_input("Route risk penalty", min_value=0.0, value=settings.route_risk_penalty)
+    st.sidebar.subheader("Route what-if")
+    scenario = st.sidebar.selectbox(
+        "Hazard scenario", ROUTE_SCENARIOS, key="route_scenario",
+        help="As generated uses the loaded alerts. Close inner lane adds a synthetic "
+             "severity-5 closure at the inner-lane chokepoint.",
+    )
+    threshold = st.sidebar.slider("Route risk threshold", 0.0, 1.0, settings.route_risk_threshold,
+                                  0.05, key="route_threshold",
+                                  help="Lanes with risk above this are closed to the alternative.")
+    penalty = st.sidebar.number_input("Route risk penalty", min_value=0.0,
+                                      value=settings.route_risk_penalty, key="route_penalty",
+                                      help="Hours added per unit of lane risk when ranking routes.")
     st.sidebar.subheader("Map layers")
     layers = {name: st.sidebar.checkbox(label, value=True, key=f"layer_{name}")
               for name, label in MAP_LAYERS}
@@ -480,10 +527,15 @@ def main() -> None:
     if not summary["has_data"]:
         st.warning("No current data is available. Start the Phase 2 replay first.")
 
+    route_time = max((row["event_time"] for row in data["telemetry"]), default=at_time)
+    scenario_alerts = (route_scenario_alerts(scenario, data["weather_alerts"], route_time)
+                       if route_time else [])
+    map_alerts = active_alerts(scenario_alerts, route_time) if route_time else []
     try:
         route = dashboard_route(data, resolution=settings.resolution,
                                 coverage_mode=settings.coverage_mode,
-                                risk_threshold=threshold, risk_penalty=penalty)
+                                risk_threshold=threshold, risk_penalty=penalty,
+                                alerts=scenario_alerts)
         route_error = None
     except ValueError as exc:
         route, route_error = None, str(exc)
@@ -496,16 +548,19 @@ def main() -> None:
     with risk_tab:
         _render_risk_panel(st, data["risk_events"], settings)
     with route_tab:
-        _render_route_panel(st, route, route_error)
+        _render_route_panel(st, route, route_error, scenario)
     with density_tab:
         window = _render_density_panel(st, data["density_metrics"], settings)
     density_rows = density_for_window(data["density_metrics"], window) if window else []
     with map_column:
-        _render_map(st, layers, positions=positions, exposed=exposed, alerts=alerts,
+        _render_map(st, layers, positions=positions, exposed=exposed, alerts=map_alerts,
                     risk_events=data["risk_events"], density_rows=density_rows, route=route)
+        if scenario != ROUTE_SCENARIOS[0]:
+            st.caption(f"Route what-if “{scenario}” is active: hazard zones and routes on the "
+                       "map reflect the scenario, not the loaded alerts.")
     with inspect_column:
         with st.container(height=640, border=True):
-            _render_inspector(st, positions, latest_risk, alerts, at_time, settings)
+            _render_inspector(st, positions, latest_risk, map_alerts, route_time, settings)
 
 
 if __name__ == "__main__":
