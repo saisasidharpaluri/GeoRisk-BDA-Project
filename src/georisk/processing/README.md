@@ -65,3 +65,11 @@ one record per quarantine entry. INFO records contain processing settings,
 counts, generation counts, lake paths, model metrics, and route decisions.
 Library calls use named loggers without configuring application logging.
 Each line contains `ts`, `level`, `logger`, `message`, and structured fields.
+
+## Spark batch transforms
+
+`spark_transforms.py` reads typed JSONL, captures malformed records, validates
+required telemetry fields and bounds, and assigns H3 cells with a pandas UDF.
+`split_valid()` returns valid and reason-tagged invalid DataFrames. Apply it
+before `assign_h3()`. UTC timestamps, schema version 1, speed 0..60 knots and
+heading 0..<360 degrees are required. Static alerts retain geometry as JSON.
