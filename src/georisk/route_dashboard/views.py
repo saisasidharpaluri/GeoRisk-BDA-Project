@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from georisk.geo_demo import DEMO_NODES
@@ -292,3 +293,30 @@ def exposure_series(risk_events: Iterable[Mapping[str, Any]]) -> list[dict[str, 
             vessels.add(event["vessel_id"])
     return [{"event_time": time, "exposed_vessels": len(exposed[time])}
             for time in sorted(exposed, key=_utc)]
+
+
+def daily_history(lake_dir: str | Path) -> list[dict[str, Any]]:
+    """Summarise the curated lake per ``event_date``; an empty lake returns []."""
+    from georisk.storage_analytics.lake import read_dataset
+
+    days: dict[str, dict[str, Any]] = {}
+
+    def day(event_date: str) -> dict[str, Any]:
+        return days.setdefault(event_date, {
+            "event_date": event_date, "risk_events": 0, "alerted_events": 0,
+            "exposed_vessels": set(), "max_density": 0,
+        })
+
+    for row in read_dataset(lake_dir, "risk_events"):
+        entry = day(row["event_date"])
+        entry["risk_events"] += 1
+        if row["risk_alert"]:
+            entry["alerted_events"] += 1
+            entry["exposed_vessels"].add(row["vessel_id"])
+    for row in read_dataset(lake_dir, "density_metrics"):
+        entry = day(row["event_date"])
+        entry["max_density"] = max(entry["max_density"], row["unique_vessel_count"])
+    return [
+        {**entry, "exposed_vessels": len(entry["exposed_vessels"])}
+        for _, entry in sorted(days.items())
+    ]

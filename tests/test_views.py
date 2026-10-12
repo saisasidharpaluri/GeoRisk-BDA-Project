@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from georisk.route_dashboard.views import (
-    ROUTE_SCENARIOS, active_alerts, exposure_series, compare_adjacent_windows, delay_mae,
+    ROUTE_SCENARIOS, active_alerts, exposure_series, compare_adjacent_windows, daily_history, delay_mae,
     density_for_window, density_windows, filter_risk_events, freshness, lane_status,
     latest_delay_estimates, latest_positions, risk_table_rows, route_scenario_alerts,
     severity_distribution,
@@ -186,6 +186,38 @@ def test_exposure_series_counts_distinct_vessels_per_time():
         {"event_time": "2026-01-01T12:05:00Z", "exposed_vessels": 2},
     ]
     assert exposure_series([]) == []
+
+
+def test_daily_history_groups_by_event_date(tmp_path):
+    from georisk.storage_analytics.lake import write_partitioned
+
+    def risk(event_id, vessel, time, alert):
+        return {"schema_version": 1, "event_id": event_id, "vessel_id": vessel,
+                "event_time": time, "latitude": 13.1, "longitude": 81.2,
+                "h3_index": "876181091ffffff", "h3_resolution": 7, "coverage_mode": "overlap",
+                "risk_alert": alert, "matching_hazards": [{
+                    "alert_id": "H1", "hazard_type": "storm", "severity": 4,
+                    "valid_from": "2026-01-01T00:00:00Z", "valid_until": "2026-01-03T00:00:00Z",
+                }] if alert else []}
+
+    write_partitioned([
+        risk("e1", "v1", "2026-01-01T12:00:00Z", True),
+        risk("e2", "v2", "2026-01-01T12:05:00Z", False),
+        risk("e3", "v1", "2026-01-02T08:00:00Z", True),
+        risk("e4", "v2", "2026-01-02T08:00:00Z", True),
+    ], tmp_path, dataset_name="risk_events")
+    write_partitioned([
+        {"schema_version": 1, "h3_index": "876181091ffffff", "h3_resolution": 7,
+         "window_start": "2026-01-02T08:00:00Z", "window_end": "2026-01-02T08:15:00Z",
+         "unique_vessel_count": 2},
+    ], tmp_path, dataset_name="density_metrics")
+    assert daily_history(tmp_path) == [
+        {"event_date": "2026-01-01", "risk_events": 2, "alerted_events": 1,
+         "exposed_vessels": 1, "max_density": 0},
+        {"event_date": "2026-01-02", "risk_events": 2, "alerted_events": 2,
+         "exposed_vessels": 2, "max_density": 2},
+    ]
+    assert daily_history(tmp_path / "empty") == []
 
 
 def test_stale_after_minutes_setting():

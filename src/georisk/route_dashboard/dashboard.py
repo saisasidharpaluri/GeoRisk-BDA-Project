@@ -13,10 +13,10 @@ from georisk.route_dashboard.route_optimizer import (
     demonstration_graph, demonstration_nodes, find_alternative_route,
 )
 from georisk.route_dashboard.views import (
-    ROUTE_SCENARIOS, active_alerts, compare_adjacent_windows, delay_mae, density_for_window,
-    density_windows, exposure_series, filter_risk_events, freshness, lane_status,
-    latest_delay_estimates, latest_positions, latest_risk_by_vessel, risk_table_rows,
-    route_scenario_alerts, severity_distribution,
+    ROUTE_SCENARIOS, active_alerts, compare_adjacent_windows, daily_history, delay_mae,
+    density_for_window, density_windows, exposure_series, filter_risk_events, freshness,
+    lane_status, latest_delay_estimates, latest_positions, latest_risk_by_vessel,
+    risk_table_rows, route_scenario_alerts, severity_distribution,
 )
 
 MAP_LAYERS = (
@@ -517,6 +517,38 @@ def _render_delay_panel(st: Any, estimates: list[dict[str, Any]]) -> None:
     )
 
 
+def _render_history(st: Any, lake_dir: str | Path) -> None:
+    with st.expander("History", icon=":material/history:"):
+        st.caption(f"Daily totals from the curated Parquet lake at {lake_dir}.")
+        try:
+            history = daily_history(lake_dir)
+        except (OSError, ValueError) as exc:
+            st.error(f"The lake could not be read: {exc}")
+            return
+        if not history:
+            st.info("The lake has no curated risk or density data yet. Run `georisk run` to "
+                    "write partitioned Parquet files.")
+            return
+        st.line_chart(
+            {"Day": [row["event_date"] for row in history],
+             "Alerted positions": [row["alerted_events"] for row in history],
+             "Exposed vessels": [row["exposed_vessels"] for row in history],
+             "Peak density (vessels/cell)": [row["max_density"] for row in history]},
+            x="Day", height=240, color=["#A8166F", "#1D5C80", "#0E7C66"],
+        )
+        st.dataframe(
+            history, width="stretch", hide_index=True,
+            column_config={
+                "event_date": st.column_config.TextColumn("Day (UTC)"),
+                "risk_events": st.column_config.NumberColumn("Risk events", format="%d"),
+                "alerted_events": st.column_config.NumberColumn("Alerted positions", format="%d"),
+                "exposed_vessels": st.column_config.NumberColumn("Exposed vessels", format="%d"),
+                "max_density": st.column_config.NumberColumn("Peak density (vessels/cell)",
+                                                             format="%d"),
+            },
+        )
+
+
 def _path_label(path: list[str]) -> str:
     from georisk.route_dashboard.map_layers import NODE_LABELS
 
@@ -632,6 +664,7 @@ def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> 
     with inspect_column:
         with st.container(height=640, border=True):
             _render_inspector(st, positions, latest_risk, map_alerts, route_time, settings)
+    _render_history(st, controls["lake_dir"])
 
 
 def _sidebar_controls(st: Any, settings: GeoRiskConfig) -> dict[str, Any]:
@@ -658,9 +691,10 @@ def _sidebar_controls(st: Any, settings: GeoRiskConfig) -> dict[str, Any]:
         input_dir = st.text_input("Input directory", str(settings.input_dir), key="input_dir")
         processed_dir = st.text_input("Processed directory", str(settings.processed_dir),
                                       key="processed_dir")
+        lake_dir = st.text_input("Lake directory", str(settings.lake_dir), key="lake_dir")
     return {"scenario": scenario, "threshold": threshold, "penalty": penalty,
-            "layers": layers, "auto_refresh": auto_refresh,
-            "input_dir": input_dir, "processed_dir": processed_dir}
+            "layers": layers, "auto_refresh": auto_refresh, "input_dir": input_dir,
+            "processed_dir": processed_dir, "lake_dir": lake_dir}
 
 
 def main() -> None:

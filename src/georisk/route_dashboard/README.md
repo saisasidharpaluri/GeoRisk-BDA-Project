@@ -116,3 +116,8 @@ Archivo / Public Sans / IBM Plex Mono). `georisk dashboard` applies it by
 setting `STREAMLIT_THEME_BASE`; when launching `streamlit run` directly, pass
 `--theme.base src/georisk/route_dashboard/theme.toml` to get the same look.
 The dashboard extra requires `streamlit>=1.50,<2` and uses `width="stretch"`.
+
+`views.daily_history(lake_dir)` summarises the curated lake per `event_date`
+(risk events, alerted events, exposed vessels, peak density). The dashboard's
+"History" expander charts and tabulates it, reading the lake directory set in
+"Data sources", and shows a no-data message for an empty lake.
