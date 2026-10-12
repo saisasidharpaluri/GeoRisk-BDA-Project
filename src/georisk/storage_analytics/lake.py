@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import io
-import json
-from datetime import date
+import re
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
@@ -24,6 +24,18 @@ CONTRACT_BY_DATASET = {
     "risk_events": "risk_event",
     "density_metrics": "density_metric",
 }
+
+ZONE_BY_DATASET = {
+    "vessel_telemetry": "raw",
+    "weather_alerts": "raw",
+    "risk_events": "curated",
+    "density_metrics": "curated",
+}
+
+
+def _validate_batch_id(batch_id: str) -> None:
+    if not isinstance(batch_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", batch_id):
+        raise ValueError("batch_id must contain only letters, digits, underscores, or hyphens")
 
 
 def _validate_event_date(event_date: str) -> str:
@@ -60,7 +72,7 @@ def _validate_records(records: list[Mapping[str, Any]], dataset_name: str) -> No
 
 
 def _local_partition(root: Path, dataset_name: str, event_date: str) -> Path:
-    return root / dataset_name / f"event_date={event_date}"
+    return root / ZONE_BY_DATASET[dataset_name] / dataset_name / f"event_date={event_date}"
 
 
 def write_dataset(
@@ -69,6 +81,7 @@ def write_dataset(
     event_date: str,
     *,
     dataset_name: str | None = None,
+    batch_id: str = "00000",
 ) -> str:
     """Write validated records to a date-partitioned Parquet dataset.
 
@@ -78,6 +91,7 @@ def write_dataset(
     if not isinstance(s3_uri, (str, Path)) or not str(s3_uri):
         raise ValueError("s3_uri must be a non-empty string")
     s3_uri = str(s3_uri)
+    _validate_batch_id(batch_id)
     event_date = _validate_event_date(event_date)
     materialized = [dict(record) for record in records]
     name = _dataset_name(materialized, dataset_name)
@@ -90,7 +104,7 @@ def write_dataset(
             import boto3
         except ImportError as exc:
             raise RuntimeError("boto3 is required for s3:// destinations") from exc
-        key = f"{parsed.path.lstrip('/')}/{name}/event_date={event_date}/part-00000.parquet"
+        key = f"{parsed.path.strip('/')}/{ZONE_BY_DATASET[name]}/{name}/event_date={event_date}/part-{batch_id}.parquet".lstrip("/")
         buffer = io.BytesIO()
         pq.write_table(table, buffer, compression="snappy")
         boto3.client("s3").put_object(
@@ -109,16 +123,45 @@ def write_dataset(
     root = Path(parsed.path if parsed.scheme == "file" else s3_uri)
     partition = _local_partition(root, name, event_date)
     partition.mkdir(parents=True, exist_ok=True)
-    output = partition / "part-00000.parquet"
+    output = partition / f"part-{batch_id}.parquet"
     pq.write_table(table, output, compression="snappy")
     return str(output)
+
+
+def write_partitioned(
+    records: Iterable[Mapping[str, Any]],
+    root: str | Path,
+    *,
+    dataset_name: str,
+    batch_id: str = "00000",
+) -> list[str]:
+    """Write each row to its UTC date; replace the same batch in each partition.
+
+    Empty input writes no files. Other batches and dates are left untouched.
+    """
+    if not isinstance(root, (str, Path)) or not str(root):
+        raise ValueError("root must be a non-empty string or Path")
+    _validate_batch_id(batch_id)
+    materialized = [dict(record) for record in records]
+    name = _dataset_name(materialized, dataset_name)
+    _validate_records(materialized, name)
+    timestamp_field = "window_start" if name == "density_metrics" else "event_time"
+    partitions: dict[str, list[dict[str, Any]]] = {}
+    for record in materialized:
+        timestamp = datetime.fromisoformat(record[timestamp_field].replace("Z", "+00:00"))
+        event_date = timestamp.astimezone(timezone.utc).date().isoformat()
+        partitions.setdefault(event_date, []).append(record)
+    return [
+        write_dataset(rows, root, event_date, dataset_name=name, batch_id=batch_id)
+        for event_date, rows in sorted(partitions.items())
+    ]
 
 
 def read_dataset(root: str | Path, dataset_name: str) -> list[dict[str, Any]]:
     """Read one local Parquet dataset, including its event-date partition."""
     if dataset_name not in CONTRACT_BY_DATASET:
         raise ValueError(f"Unsupported dataset '{dataset_name}'")
-    path = Path(root) / dataset_name
+    path = Path(root) / ZONE_BY_DATASET[dataset_name] / dataset_name
     if not path.exists():
         return []
     table = ds.dataset(

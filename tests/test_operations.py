@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import json
+from pathlib import Path
 
 import pytest
 
@@ -61,9 +64,41 @@ def test_phase7_pipeline_report_is_accepted(tmp_path):
     assert len({row["window_start"] for row in density}) > 1
     assert report["route"]["route_changed"] is True
     assert report["route"]["baseline_blocked_edges"]
-    assert len(report["artifacts"]) == 6
+    assert len(report["artifacts"]) == 8
+    assert set(report["lake"]["paths"]) == {
+        "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics",
+    }
+    parquet_paths = [path for paths in report["lake"]["paths"].values() for path in paths]
+    assert set(parquet_paths) == {str(path) for path in config.lake_dir.rglob("*.parquet")}
+    assert set(parquet_paths) <= {entry["path"] for entry in report["artifacts"]}
+    assert all(Path(path).is_file() for path in parquet_paths)
     validated = validate_report(config.report_path)
     assert validated["passed"] is True
+
+
+@pytest.mark.parametrize("missing_dataset", [
+    "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics",
+])
+def test_parquet_acceptance_checks_every_partition(tmp_path, missing_dataset):
+    paths = {}
+    for dataset in ["vessel_telemetry", "weather_alerts", "risk_events", "density_metrics"]:
+        paths[dataset] = []
+        for index in range(2):
+            path = tmp_path / f"{dataset}-{index}.parquet"
+            path.write_bytes(b"fixture")
+            paths[dataset].append(str(path))
+
+    def parquet_passed() -> bool:
+        result = acceptance_checks({"lake": {"paths": paths}})
+        return next(check["passed"] for check in result["checks"] if check["name"] == "parquet_outputs")
+
+    assert parquet_passed() is True
+    Path(paths[missing_dataset][1]).unlink()
+    assert parquet_passed() is False
+    paths[missing_dataset] = []
+    assert parquet_passed() is False
+    del paths[missing_dataset]
+    assert parquet_passed() is False
 
 
 def test_validate_report_rejects_tampered_artifact(tmp_path):

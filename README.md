@@ -76,7 +76,9 @@ py -c "from georisk.storage_analytics.lake import write_dataset; import json; fr
 ```
 
 Datasets use the layout
-`output/lake/<dataset>/event_date=YYYY-MM-DD/`. The lake helpers provide
+`output/lake/<zone>/<dataset>/event_date=YYYY-MM-DD/part-<batch_id>.parquet`,
+with telemetry and alerts in `raw`, and risk and density in `curated`.
+Use `write_partitioned()` to assign each row to its own UTC date. The lake helpers provide
 validated writes, reads, risk summaries, and density summaries. Athena query
 examples are in `src/georisk/storage_analytics/sql/`.
 

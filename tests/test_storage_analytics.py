@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +16,9 @@ from georisk.storage_analytics.delay_model import (
     split_by_time,
     train_and_evaluate,
 )
-from georisk.storage_analytics.lake import density_summary, read_dataset, risk_summary, write_dataset
+from georisk.storage_analytics.lake import (
+    density_summary, read_dataset, risk_summary, write_dataset, write_partitioned,
+)
 
 UTC = timezone.utc
 
@@ -82,6 +87,112 @@ def test_density_summary_and_risk_summary(tmp_path):
         "exposed_vessel_count": 1,
     }
     assert [row["unique_vessel_count"] for row in density_summary(lake)] == [1, 2]
+
+
+@pytest.mark.parametrize("dataset", CONTRACT_BY_DATASET)
+def test_batch_spanning_midnight_creates_two_partitions(tmp_path, dataset):
+    events = generate_events(7, 2)
+    records = {
+        "vessel_telemetry": events["telemetry"][:2],
+        "weather_alerts": events["weather_alerts"][:2],
+        "risk_events": [_risk(0), _risk(1)],
+        "density_metrics": [_density(0), _density(1)],
+    }[dataset]
+    timestamp_field = "window_start" if dataset == "density_metrics" else "event_time"
+    for record, timestamp in zip(records, ["2026-01-01T23:50:00Z", "2026-01-02T00:00:00Z"]):
+        record[timestamp_field] = timestamp
+        if dataset == "density_metrics":
+            record["window_end"] = (
+                datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                + timedelta(minutes=15)
+            ).isoformat()
+
+    paths = write_partitioned(reversed(records), tmp_path, dataset_name=dataset)
+
+    assert [Path(path).parent.name for path in paths] == [
+        "event_date=2026-01-01", "event_date=2026-01-02",
+    ]
+    assert all(Path(path).is_file() for path in paths)
+    rows = read_dataset(tmp_path, dataset)
+    assert [(row[timestamp_field], row["event_date"]) for row in rows] == [
+        ("2026-01-01T23:50:00Z", "2026-01-01"),
+        ("2026-01-02T00:00:00Z", "2026-01-02"),
+    ]
+
+
+def test_partitions_accept_explicit_utc_offset(tmp_path):
+    records = [
+        {**_risk(0), "event_time": "2026-01-01T23:30:00+00:00"},
+        {**_risk(1), "event_time": "2026-01-02T00:30:00+00:00"},
+    ]
+    write_partitioned(records, tmp_path, dataset_name="risk_events")
+    assert {row["event_time"]: row["event_date"] for row in read_dataset(tmp_path, "risk_events")} == {
+        records[0]["event_time"]: "2026-01-01",
+        records[1]["event_time"]: "2026-01-02",
+    }
+
+
+def test_partitioned_batch_preserves_utc_only_contract(tmp_path):
+    record = {**_risk(0), "event_time": "2026-01-02T00:30:00+05:30"}
+    with pytest.raises(ValueError, match="event_time"):
+        write_partitioned([record], tmp_path, dataset_name="risk_events")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_rewrite_same_batch_id_is_idempotent(tmp_path):
+    records = [_risk(0), {**_risk(1), "event_time": "2026-01-02T12:00:00Z"}]
+    paths = write_partitioned(records, tmp_path, dataset_name="risk_events", batch_id="batch-1")
+    assert write_partitioned(
+        records, tmp_path, dataset_name="risk_events", batch_id="batch-1",
+    ) == paths
+    assert len(read_dataset(tmp_path, "risk_events")) == 2
+
+    write_partitioned([_risk(2)], tmp_path, dataset_name="risk_events", batch_id="batch-2")
+    replacement = _risk(3, False)
+    write_partitioned([replacement], tmp_path, dataset_name="risk_events", batch_id="batch-1")
+    rows = read_dataset(tmp_path, "risk_events")
+    assert {row["event_time"] for row in rows} == {
+        replacement["event_time"], records[1]["event_time"], _risk(2)["event_time"],
+    }
+    assert len(rows) == 3
+    assert len(list(tmp_path.rglob("*.parquet"))) == 3
+    assert risk_summary(tmp_path)["alerted_event_count"] == 2
+
+
+def test_raw_and_curated_zones(tmp_path):
+    events = generate_events(7, 1)
+    for dataset, records, zone in [
+        ("vessel_telemetry", events["telemetry"], "raw"),
+        ("weather_alerts", events["weather_alerts"], "raw"),
+        ("risk_events", [_risk(0)], "curated"),
+        ("density_metrics", [_density(0)], "curated"),
+    ]:
+        paths = write_partitioned(records, tmp_path, dataset_name=dataset)
+        assert len(paths) == 1
+        assert Path(paths[0]).relative_to(tmp_path).parts == (
+            zone, dataset, "event_date=2026-01-01", "part-00000.parquet",
+        )
+        assert len(read_dataset(tmp_path, dataset)) == len(records)
+
+
+def test_empty_partitioned_batch_writes_no_files(tmp_path):
+    assert write_partitioned([], tmp_path, dataset_name="risk_events") == []
+    assert list(tmp_path.iterdir()) == []
+    assert read_dataset(tmp_path, "risk_events") == []
+
+
+@pytest.mark.parametrize("batch_id", ["", "../escape", "nested/file", "nested\\file"])
+def test_partitioned_batch_rejects_unsafe_ids(tmp_path, batch_id):
+    with pytest.raises(ValueError, match="batch_id"):
+        write_partitioned([_risk(0)], tmp_path, dataset_name="risk_events", batch_id=batch_id)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_partitioned_batch_validates_all_rows_before_writing(tmp_path):
+    invalid = {**_risk(1), "event_time": "invalid"}
+    with pytest.raises(ValueError):
+        write_partitioned([_risk(0), invalid], tmp_path, dataset_name="risk_events")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_lake_rejects_invalid_records_and_dates(tmp_path):

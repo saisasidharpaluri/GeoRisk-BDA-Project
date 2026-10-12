@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,17 +20,11 @@ from georisk.route_dashboard.route_optimizer import (
 )
 from georisk.route_dashboard.edge_risk import score_graph
 from georisk.storage_analytics.delay_model import make_synthetic_label, split_by_time, train_and_evaluate
-from georisk.storage_analytics.lake import density_summary, risk_summary, write_dataset
+from georisk.storage_analytics.lake import density_summary, risk_summary, write_partitioned
 from georisk.operations import acceptance_checks, artifact_manifest
 
 
 logger = logging.getLogger(__name__)
-
-def _event_date(events: list[dict[str, Any]]) -> str:
-    if not events:
-        return datetime.now().date().isoformat()
-    return events[0]["event_time"][:10]
-
 
 def _delay_rows(
     risk_events: list[dict[str, Any]], density_metrics: list[dict[str, Any]]
@@ -80,21 +73,17 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "strict": settings.strict_validation,
         }
     )
-    event_date = _event_date(events["telemetry"])
-    risk_path = write_dataset(
-        processed["risk_events"],
-        settings.lake_dir,
-        event_date,
-        dataset_name="risk_events",
-    )
-    density_path = write_dataset(
-        processed["density_metrics"],
-        settings.lake_dir,
-        event_date,
-        dataset_name="density_metrics",
-    )
+    lake_paths = {
+        name: write_partitioned(records, settings.lake_dir, dataset_name=name)
+        for name, records in {
+            "vessel_telemetry": events["telemetry"],
+            "weather_alerts": events["weather_alerts"],
+            "risk_events": processed["risk_events"],
+            "density_metrics": processed["density_metrics"],
+        }.items()
+    }
     logger.info("Lake datasets written", extra={"georisk": {
-        "risk_path": str(risk_path), "density_path": str(density_path),
+        "paths": lake_paths,
     }})
     delay_rows = _delay_rows(
         processed["risk_events"], processed["density_metrics"]
@@ -130,8 +119,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             settings.input_dir / "weather-alerts.jsonl",
             settings.processed_dir / "risk-events.jsonl",
             settings.processed_dir / "density-metrics.jsonl",
-            risk_path,
-            density_path,
+            *(path for paths in lake_paths.values() for path in paths),
         ]
     )
     report = {
@@ -146,7 +134,6 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "coverage_mode": settings.coverage_mode,
             "window_minutes": settings.density_window_minutes,
             "allowed_lateness_minutes": settings.allowed_lateness_minutes,
-            "event_date": event_date,
             "acceptance_required": settings.acceptance_required,
             "strict_validation": settings.strict_validation,
         },
@@ -163,8 +150,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "metadata": processed["metadata"],
         },
         "lake": {
-            "risk_path": str(risk_path),
-            "density_path": str(density_path),
+            "paths": lake_paths,
             "risk_summary": risk_summary(settings.lake_dir),
             "density_row_count": len(density_summary(settings.lake_dir)),
         },

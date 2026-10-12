@@ -71,11 +71,14 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
         and processing.get("density_metric_count", 0) > 0,
         "risk and density outputs are non-empty",
     )
-    lake_paths = [lake.get("risk_path"), lake.get("density_path")]
+    lake_paths = lake.get("paths", {})
+    required_datasets = {"vessel_telemetry", "weather_alerts", "risk_events", "density_metrics"}
     check(
         "parquet_outputs",
-        all(path and Path(path).is_file() for path in lake_paths),
-        "curated Parquet files exist",
+        required_datasets <= lake_paths.keys()
+        and all(lake_paths[name] for name in required_datasets)
+        and all(path and Path(path).is_file() for paths in lake_paths.values() for path in paths),
+        "all listed raw and curated Parquet files exist",
     )
     model_metrics = model.get("model_metrics", {})
     baseline_metrics = model.get("baseline_metrics", {})
