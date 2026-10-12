@@ -13,7 +13,8 @@ from georisk.route_dashboard.route_optimizer import (
     demonstration_graph, demonstration_nodes, find_alternative_route,
 )
 from georisk.route_dashboard.views import (
-    active_alerts, exposure_series, filter_risk_events, latest_positions, latest_risk_by_vessel,
+    active_alerts, compare_adjacent_windows, density_for_window, density_windows,
+    exposure_series, filter_risk_events, latest_positions, latest_risk_by_vessel,
     risk_table_rows, severity_distribution,
 )
 
@@ -320,6 +321,63 @@ def _render_risk_panel(st: Any, risk_events: list[dict[str, Any]], settings: Geo
                     "widen the time range, or clear the hazard types.")
 
 
+def _window_label(rows: list[dict[str, Any]], window_start: str) -> str:
+    end = next((row["window_end"] for row in rows if row["window_start"] == window_start), "")
+    return f"{_short_time(window_start)}–{_short_time(end)}" if end else _short_time(window_start)
+
+
+def _render_density_panel(
+    st: Any, density_metrics: list[dict[str, Any]], settings: GeoRiskConfig,
+) -> str | None:
+    """Render the density tables and return the window the map should show."""
+    st.subheader("Corridor density")
+    st.caption(f"Unique vessels per H3 cell (res {settings.resolution}) per "
+               f"{settings.density_window_minutes}-minute window. The map's density layer "
+               "follows the window selected here.")
+    windows = density_windows(density_metrics)
+    if not windows:
+        st.info("No density metrics yet. Run `georisk run` to aggregate vessel positions "
+                "into H3 windows.")
+        return None
+    window = windows[-1]
+    if len(windows) > 1:
+        window = st.select_slider("Window (UTC)", windows, value=windows[-1], key="density_window",
+                                  format_func=lambda start: _window_label(density_metrics, start))
+    rows = density_for_window(density_metrics, window)
+    peak = max(row["unique_vessel_count"] for row in rows)
+    current_column, compare_column = st.columns([1, 1.4], gap="large")
+    with current_column:
+        st.markdown(f"**Busiest cells · {_window_label(density_metrics, window)} UTC**")
+        st.dataframe(
+            rows, width="stretch", hide_index=True, height=300,
+            column_order=("h3_index", "unique_vessel_count"),
+            column_config={
+                "h3_index": st.column_config.TextColumn("H3 cell"),
+                "unique_vessel_count": st.column_config.ProgressColumn(
+                    "Unique vessels", min_value=0, max_value=max(peak, 1), format="%d"),
+            },
+        )
+    with compare_column:
+        st.markdown("**Compared with neighbouring windows**")
+        comparison = [
+            {**row, "change": None if row["previous"] is None else row["current"] - row["previous"]}
+            for row in compare_adjacent_windows(density_metrics, window)
+        ]
+        st.dataframe(
+            comparison, width="stretch", hide_index=True, height=300,
+            column_order=("h3_index", "previous", "current", "next", "change"),
+            column_config={
+                "h3_index": st.column_config.TextColumn("H3 cell"),
+                "previous": st.column_config.NumberColumn("Previous", format="%d"),
+                "current": st.column_config.NumberColumn("Selected", format="%d"),
+                "next": st.column_config.NumberColumn("Next", format="%d"),
+                "change": st.column_config.NumberColumn("Change vs previous", format="%+d"),
+            },
+        )
+        st.caption("Blank neighbour columns mean the selected window is the first or last one.")
+    return window
+
+
 def _render_route_panel(st: Any, route: dict[str, Any] | None, route_error: str | None) -> None:
     st.subheader("Route comparison")
     if route_error:
@@ -382,15 +440,16 @@ def main() -> None:
         route_error = None
     except ValueError as exc:
         route, route_error = None, str(exc)
-    density_rows = [row for row in data["density_metrics"]
-                    if at_time and row["window_start"] <= at_time < row["window_end"]]
 
     map_column, inspect_column = st.columns([2.6, 1], gap="medium")
-    risk_tab, route_tab = st.tabs(["Risk", "Route"])
+    risk_tab, route_tab, density_tab = st.tabs(["Risk", "Route", "Corridor density"])
     with risk_tab:
         _render_risk_panel(st, data["risk_events"], settings)
     with route_tab:
         _render_route_panel(st, route, route_error)
+    with density_tab:
+        window = _render_density_panel(st, data["density_metrics"], settings)
+    density_rows = density_for_window(data["density_metrics"], window) if window else []
     with map_column:
         _render_map(st, layers, positions=positions, exposed=exposed, alerts=alerts,
                     risk_events=data["risk_events"], density_rows=density_rows, route=route)

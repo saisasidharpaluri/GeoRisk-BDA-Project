@@ -84,3 +84,7 @@ The KPI row shows active alerts at the latest event time, vessels exposed now
 UTC. The "Risk" tab charts alerted positions by severity and filters the risk
 table by hazard type, minimum severity (1–5), and event-time range; the table
 includes `coverage_mode` and `h3_resolution`.
+
+The "Corridor density" tab selects a window (`select_slider`, defaulting to the
+latest), lists its busiest cells, and compares each cell with the previous and
+next windows. The map's extruded density layer shows the selected window.
