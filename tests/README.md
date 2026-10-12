@@ -1,11 +1,11 @@
-# Validation plan scaffold
+# Executable validation suite
 
-No executable tests are included yet. Add validation with each implementation milestone:
+Run `.venv\Scripts\python -m pytest -q` from `project/`. The suite covers:
 
 - Contract validation for valid and invalid telemetry and hazard records.
 - H3 coverage cases for clearly inside, outside, and boundary-near coordinates.
 - Stream-window deduplication and expired-alert behavior.
-- S3/Parquet and Athena query checks.
+- Local Parquet round trips and portable Athena SQL executed in DuckDB.
 - Time-based held-out model comparison against a mean baseline.
 - Risk-threshold route change and dashboard rendering checks.
 - Streamlit AppTest coverage of every dashboard panel, filters, route what-if

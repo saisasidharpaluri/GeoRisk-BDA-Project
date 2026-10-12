@@ -1,1 +1,1 @@
-"""Storage and analytics workstream scaffold; implementation is pending."""
+"""Typed Parquet storage, SQL summaries, and synthetic delay evaluation."""

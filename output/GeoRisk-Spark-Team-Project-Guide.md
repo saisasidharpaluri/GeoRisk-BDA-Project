@@ -26,7 +26,7 @@ Supply chains rely on vessels moving through ports, chokepoints, and sea lanes. 
 
 ## Important status
 
-The repository currently contains scaffold only: module placeholders, JSON Schema contracts, configuration guidance, and project documentation. The features in this guide describe the intended completed system; they are not implemented or deployed yet.
+The local pipeline is implemented: synthetic replay, H3 risk and density processing, typed Parquet storage and local SQL, linear and Spark MLlib delay evaluation, route comparisons, and an interactive dashboard. Spark Structured Streaming runs locally over file batches. AWS resources have not been deployed; cloud ingestion, Glue jobs, and Athena integration remain the planned deployment path. The original PDF is archival; this Markdown records current status.
 
 
 ## 1. Product features
@@ -251,7 +251,7 @@ A suggested 12-week sequence keeps the complete path visible while features are 
 
 ## Current code status
 
-This PDF describes the intended full project. The GitHub repository currently contains project scaffolding only: placeholder modules, schemas, and documentation. No Kinesis streams, Glue job, S3 lake, Athena tables, model, route optimizer, or dashboard have been implemented or deployed.
+The repository implements the complete local demonstration with versioned contracts, deterministic scenarios, quarantine, revision handling, configurable H3 coverage and density windows, artifact-integrity checks, model persistence, routing, and tested dashboard panels. Local Spark supports checkpointed file streaming and MLlib GBT evaluation. CloudFormation templates and client adapters exist, but no Kinesis streams, Glue jobs, S3 lake, or Athena tables have been deployed or verified against AWS. Local SQL tests cover the query semantics only.
 
 ## Technical references
 

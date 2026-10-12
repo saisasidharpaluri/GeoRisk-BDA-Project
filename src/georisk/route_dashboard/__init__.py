@@ -1,1 +1,1 @@
-"""Routing and dashboard workstream scaffold; implementation is pending."""
+"""Hazard-aware route comparisons and interactive Streamlit views."""

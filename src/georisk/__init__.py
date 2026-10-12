@@ -1,1 +1,1 @@
-"""GeoRisk-Spark semester project scaffold."""
+"""Synthetic vessel risk processing, analytics, and demonstration dashboard."""

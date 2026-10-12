@@ -1,3 +1,3 @@
-# Dashboard assets scaffold
+# Dashboard assets
 
-Place small, licensed, project-owned presentation assets here when the dashboard is implemented. Keep large datasets and generated map output out of Git.
+The implemented dashboard builds PyDeck layers from generated records and uses the nautical theme in `../theme.toml`. This directory is reserved for small, licensed, project-owned assets; keep generated maps and datasets out of Git.

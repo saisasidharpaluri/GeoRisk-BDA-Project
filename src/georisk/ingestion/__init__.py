@@ -1,1 +1,1 @@
-"""Ingestion workstream scaffold; implementation is pending."""
+"""Deterministic vessel scenarios, validated event replay, and stream publishing."""

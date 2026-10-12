@@ -1,16 +1,16 @@
 # GeoRisk-Spark
 
-GeoRisk-Spark is a four-person Big Data Analytics semester project. The planned system will process synthetic vessel telemetry and marine hazard alerts with H3 and Spark, store results on AWS, estimate demonstration delays, compare safer routes, and show results in a dashboard.
+GeoRisk-Spark is a four-person Big Data Analytics semester project. It processes synthetic vessel telemetry and marine hazard alerts locally with H3 and optional Spark, stores Parquet results, estimates demonstration delays, compares routes, and shows results in a Streamlit dashboard.
 
-Phases 1-5 currently provide the shared contract validator, deterministic
+The local implementation provides the shared contract validator, deterministic
 synthetic event generation, local JSONL replay, H3 indexing, hazard matching,
 risk/density processing, Parquet analytics, delay evaluation, risk-aware route
-comparison, and a local dashboard. AWS infrastructure remains planned for a
-later deployment phase.
+comparison, Spark file streaming and MLlib GBT evaluation, and a local dashboard.
+AWS resources have not been deployed.
 
 ## Workstreams
 
-| Owner | Area | Scaffold location |
+| Owner | Area | Module location |
 | --- | --- | --- |
 | Member 1 | Synthetic event generation, event contracts, Kinesis publishing | `src/georisk/ingestion/` |
 | Member 2 | Spark Structured Streaming, H3 indexing, risk and density outputs | `src/georisk/processing/` |
@@ -243,4 +243,9 @@ Amazon Kinesis Data Streams will ingest vessel and weather events; AWS Glue will
 
 ## Project guide
 
-See [the team project guide](output/pdf/GeoRisk-Spark-Team-Project-Guide.pdf) for the problem statement, architecture, role responsibilities, milestones, event contracts, AWS cost guidance, and acceptance criteria.
+See [the current team project guide](output/GeoRisk-Spark-Team-Project-Guide.md)
+for the problem statement, intended cloud architecture, event contracts, AWS
+cost guidance, and acceptance criteria. Workstream ownership is listed above;
+the guide's suggested schedule is not the implementation checklist. The
+[original PDF](output/pdf/GeoRisk-Spark-Team-Project-Guide.pdf) predates the local
+implementation and is retained as an archival artifact.

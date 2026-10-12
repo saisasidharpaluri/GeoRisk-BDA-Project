@@ -1,1 +1,1 @@
-"""Spatial processing workstream scaffold; implementation is pending."""
+"""Local and Spark H3 risk matching, density windows, and event quarantine."""

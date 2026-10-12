@@ -1,4 +1,4 @@
-# Configuration scaffold
+# Runtime configuration
 
 `.env.example` documents names and safe placeholders only. Copy values into local untracked configuration or use an AWS profile/SSO session. Never add credentials, secret values, or generated outputs to Git.
 
@@ -8,7 +8,7 @@ the full run report to `GEORISK_REPORT_PATH`. Configuration contains no AWS
 credentials; authentication must come from an AWS profile, SSO session, or
 workload role.
 
-Phase 7 adds `GEORISK_ACCEPTANCE_REQUIRED` as an explicit deployment setting.
+`GEORISK_ACCEPTANCE_REQUIRED` controls the local run's acceptance exit status.
 Keep it enabled for demonstrations so a run cannot be presented as complete
 without passing the acceptance checks.
 
