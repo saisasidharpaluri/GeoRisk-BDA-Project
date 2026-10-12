@@ -112,7 +112,67 @@ def test_processing_rejects_invalid_input():
     event = _telemetry("vessel", 12, 78)
     event["latitude"] = 100
     with pytest.raises(ContractValidationError):
-        process_events([event], [])
+        process_events([event], [], strict=True)
+
+
+def test_invalid_telemetry_is_quarantined_and_rest_processed():
+    invalid = _telemetry("bad", 100, 78)
+    result = process_events([invalid, _telemetry("good", 12, 78)], [_alert()])
+    assert [row["vessel_id"] for row in result["risk_events"]] == ["good"]
+    assert result["density_metrics"][0]["unique_vessel_count"] == 1
+    assert result["stats"]["telemetry_in"] == 2
+    assert result["stats"]["alerts_in"] == 1
+    assert result["stats"]["quarantined"] == 1
+    entry = result["quarantine"][0]
+    assert entry["contract"] == "vessel_telemetry"
+    assert entry["reason"] == "contract_violation"
+    assert entry["record"] == invalid
+    assert entry["errors"] and "latitude" in entry["errors"][0]
+    assert entry["quarantined_at"].endswith("Z")
+
+
+@pytest.mark.parametrize("until_minutes", [-2, -1])
+def test_invalid_validity_alert_is_quarantined(until_minutes):
+    result = process_events([_telemetry("good", 12, 78)], [_alert(until_minutes=until_minutes)])
+    assert not result["risk_events"][0]["risk_alert"]
+    assert result["quarantine"][0]["reason"] == "invalid_validity_range"
+    assert result["stats"]["quarantined"] == 1
+    with pytest.raises(ValueError):
+        process_events([], [_alert(until_minutes=until_minutes)], strict=True)
+
+
+@pytest.mark.parametrize("invalid", [{}, None, []])
+def test_invalid_alert_and_non_mapping_telemetry_are_quarantined(invalid):
+    result = process_events([invalid, _telemetry("good", 12, 78)], [invalid, _alert()])
+    assert result["risk_events"][0]["risk_alert"]
+    assert result["stats"]["quarantined"] == 2
+    assert all(entry["reason"] == "contract_violation" for entry in result["quarantine"])
+
+
+@pytest.mark.parametrize("bad_line", ["{bad json}", "[]", "null", '"' + "x" * 1200 + '"'])
+def test_runner_writes_quarantine_for_bad_json_line(tmp_path, bad_line):
+    (tmp_path / "vessel-telemetry.jsonl").write_text(
+        bad_line + "\n" + json.dumps(_telemetry("good", 12, 78)) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "weather-alerts.jsonl").write_text("", encoding="utf-8")
+    output = tmp_path / "processed"
+    config = {"input_dir": tmp_path, "output_dir": output}
+    result = run_streaming_job(config)
+    assert len(result["risk_events"]) == 1
+    assert result["stats"]["telemetry_in"] == 2
+    assert result["stats"]["quarantined"] == 1
+    entry = json.loads((output / "quarantine.jsonl").read_text(encoding="utf-8"))
+    assert entry == result["quarantine"][0]
+    assert entry["reason"] == "invalid_json"
+    assert entry["record"] == {"line": 1, "raw": (bad_line + "\n")[:1000]}
+    with pytest.raises(ValueError, match="invalid JSON"):
+        run_streaming_job({**config, "strict": True})
+
+
+def test_runner_always_writes_empty_quarantine(tmp_path):
+    result = run_streaming_job({"telemetry": [], "output_dir": tmp_path})
+    assert result["quarantine"] == []
+    assert (tmp_path / "quarantine.jsonl").read_text(encoding="utf-8") == ""
 
 
 def test_local_runner_reads_and_writes_jsonl(tmp_path):

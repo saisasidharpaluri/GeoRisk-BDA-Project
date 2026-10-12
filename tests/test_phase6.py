@@ -55,6 +55,10 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     assert report["generation"]["generated"] == 20
     assert report["processing"]["risk_event_count"] == 18
     assert report["processing"]["density_metric_count"] > 0
+    assert report["processing"]["quarantined_count"] == 0
+    assert report["processing"]["stats"]["telemetry_in"] == 18
+    assert (config.processed_dir / "quarantine.jsonl").exists()
+    assert "quarantine.jsonl" not in json.dumps(report["artifacts"])
     assert report["model"]["evaluation_count"] > 0
     assert report["model"]["model_metrics"]["mae"] <= report["model"]["baseline_metrics"]["mae"]
     assert report["route"]["route_changed"] is True
@@ -63,6 +67,15 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     assert report["dashboard"]["has_data"] is True
     saved = json.loads(config.report_path.read_text(encoding="utf-8"))
     assert saved["status"] == "success"
+
+
+def test_strict_validation_configuration():
+    assert GeoRiskConfig.from_env({}).strict_validation is False
+    assert GeoRiskConfig.from_env({"GEORISK_STRICT_VALIDATION": "true"}).strict_validation is True
+    with pytest.raises(ValueError, match="GEORISK_STRICT_VALIDATION"):
+        GeoRiskConfig.from_env({"GEORISK_STRICT_VALIDATION": "sometimes"})
+    with pytest.raises(ValueError, match="GEORISK_STRICT_VALIDATION"):
+        GeoRiskConfig(strict_validation="false")
 
 
 def test_aws_foundation_template_is_safe_and_complete(project_root):

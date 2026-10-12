@@ -62,6 +62,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "input_dir": settings.input_dir,
             "output_dir": settings.processed_dir,
             "resolution": settings.resolution,
+            "strict": settings.strict_validation,
         }
     )
     event_date = _event_date(events["telemetry"])
@@ -111,6 +112,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "resolution": settings.resolution,
             "event_date": event_date,
             "acceptance_required": settings.acceptance_required,
+            "strict_validation": settings.strict_validation,
         },
         "generation": {
             "generated": generation_stats.generated,
@@ -120,6 +122,8 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
         "processing": {
             "risk_event_count": len(processed["risk_events"]),
             "density_metric_count": len(processed["density_metrics"]),
+            "quarantined_count": len(processed["quarantine"]),
+            "stats": processed["stats"],
         },
         "lake": {
             "risk_path": str(risk_path),

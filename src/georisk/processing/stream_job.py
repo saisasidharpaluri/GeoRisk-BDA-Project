@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from georisk.contracts import SCHEMA_VERSION, validate_event
+from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
 from georisk.processing.h3_index import DEFAULT_RESOLUTION, point_to_cell, polygon_to_cells
 
 UTC = timezone.utc
@@ -65,14 +65,30 @@ def process_events(
     alerts: Iterable[Mapping[str, Any]],
     *,
     resolution: int = DEFAULT_RESOLUTION,
-) -> dict[str, list[dict[str, Any]]]:
+    strict: bool = False,
+) -> dict[str, Any]:
     """Create risk events and unique-vessel density metrics from one batch."""
-    alert_records = [dict(alert) for alert in alerts]
-    telemetry_records = [dict(event) for event in telemetry]
-    for alert in alert_records:
-        validate_event("weather_alert", alert)
+    if not isinstance(strict, bool):
+        raise TypeError("strict must be a boolean")
+    quarantine = []
+    stats = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
+    alert_records = []
+    for alert in alerts:
+        stats["alerts_in"] += 1
+        try:
+            validate_event("weather_alert", alert)
+        except (ContractValidationError, TypeError) as exc:
+            if strict:
+                raise
+            quarantine.append(_quarantine_entry("weather_alert", "contract_violation", alert, exc))
+            continue
         if _parse_utc(alert["valid_until"]) <= _parse_utc(alert["valid_from"]):
-            raise ValueError(f"alert {alert['alert_id']} has an invalid validity range")
+            exc = ValueError(f"alert {alert['alert_id']} has an invalid validity range")
+            if strict:
+                raise exc
+            quarantine.append(_quarantine_entry("weather_alert", "invalid_validity_range", alert, exc))
+            continue
+        alert_records.append(dict(alert))
 
     coverage: dict[str, list[tuple[dict[str, Any], datetime, datetime]]] = {}
     for alert in alert_records:
@@ -83,8 +99,15 @@ def process_events(
 
     risk_events = []
     density_keys: set[tuple[datetime, datetime, str, str]] = set()
-    for event in telemetry_records:
-        validate_event("vessel_telemetry", event)
+    for event in telemetry:
+        stats["telemetry_in"] += 1
+        try:
+            validate_event("vessel_telemetry", event)
+        except (ContractValidationError, TypeError) as exc:
+            if strict:
+                raise
+            quarantine.append(_quarantine_entry("vessel_telemetry", "contract_violation", event, exc))
+            continue
         event_time = _parse_utc(event["event_time"])
         cell = point_to_cell(event["latitude"], event["longitude"], resolution)
         matches = _matching_hazards(cell, event_time, coverage)
@@ -122,10 +145,28 @@ def process_events(
         validate_event("risk_event", event)
     for metric in density_metrics:
         validate_event("density_metric", metric)
-    return {"risk_events": risk_events, "density_metrics": density_metrics}
+    stats["quarantined"] = len(quarantine)
+    return {
+        "risk_events": risk_events, "density_metrics": density_metrics,
+        "quarantine": quarantine, "stats": stats,
+    }
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def _quarantine_entry(
+    contract: str, reason: str, record: Any, exc: Exception
+) -> dict[str, Any]:
+    """Preserve rejected input with validation details and a UTC timestamp."""
+    return {
+        "contract": contract, "reason": reason,
+        "errors": exc.errors if isinstance(exc, ContractValidationError) else [str(exc)],
+        "record": dict(record) if isinstance(record, Mapping) else record,
+        "quarantined_at": _timestamp(datetime.now(UTC)),
+    }
+
+
+def _read_jsonl(
+    path: Path, contract: str, quarantine: list[dict[str, Any]], *, strict: bool
+) -> list[dict[str, Any]]:
     records = []
     with path.open(encoding="utf-8") as source:
         for line_number, line in enumerate(source, 1):
@@ -133,10 +174,15 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
                 continue
             try:
                 record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid JSON in {path}:{line_number}") from exc
-            if not isinstance(record, dict):
-                raise ValueError(f"expected an object in {path}:{line_number}")
+                if not isinstance(record, dict):
+                    raise ValueError(f"expected an object in {path}:{line_number}")
+            except ValueError as exc:
+                if strict:
+                    raise ValueError(f"invalid JSON object in {path}:{line_number}: {exc}") from exc
+                quarantine.append(_quarantine_entry(
+                    contract, "invalid_json", {"line": line_number, "raw": line[:1000]}, exc
+                ))
+                continue
             records.append(record)
     return records
 
@@ -147,7 +193,7 @@ def _write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
             output.write(json.dumps(record, sort_keys=True) + "\n")
 
 
-def run_streaming_job(config: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
     """Run the local batch-compatible processing path.
 
     The config accepts either in-memory ``telemetry``/``weather_alerts`` lists
@@ -157,6 +203,10 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, list[dict[str, Any
     if not isinstance(config, Mapping):
         raise TypeError("config must be a mapping")
     resolution = config.get("resolution", DEFAULT_RESOLUTION)
+    strict = config.get("strict", False)
+    if not isinstance(strict, bool):
+        raise TypeError("strict must be a boolean")
+    quarantine: list[dict[str, Any]] = []
     if "telemetry" in config or "weather_alerts" in config:
         telemetry = config.get("telemetry", [])
         alerts = config.get("weather_alerts", [])
@@ -165,12 +215,22 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, list[dict[str, Any
         if not input_dir:
             raise ValueError("config requires telemetry/weather_alerts or input_dir")
         directory = Path(input_dir)
-        telemetry = _read_jsonl(directory / "vessel-telemetry.jsonl")
-        alerts = _read_jsonl(directory / "weather-alerts.jsonl")
-    results = process_events(telemetry, alerts, resolution=resolution)
+        telemetry = _read_jsonl(
+            directory / "vessel-telemetry.jsonl", "vessel_telemetry", quarantine, strict=strict
+        )
+        alerts = _read_jsonl(
+            directory / "weather-alerts.jsonl", "weather_alert", quarantine, strict=strict
+        )
+    results = process_events(telemetry, alerts, resolution=resolution, strict=strict)
+    for entry in quarantine:
+        key = "telemetry_in" if entry["contract"] == "vessel_telemetry" else "alerts_in"
+        results["stats"][key] += 1
+    results["quarantine"] = quarantine + results["quarantine"]
+    results["stats"]["quarantined"] = len(results["quarantine"])
     if config.get("output_dir"):
         output_dir = Path(config["output_dir"])
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_jsonl(output_dir / "risk-events.jsonl", results["risk_events"])
         _write_jsonl(output_dir / "density-metrics.jsonl", results["density_metrics"])
+        _write_jsonl(output_dir / "quarantine.jsonl", results["quarantine"])
     return results

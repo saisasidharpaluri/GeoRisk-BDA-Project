@@ -28,3 +28,5 @@ resolution is retained on every output.
 ## Handoff
 
 Consume Member 1's event schemas and publish risk and density rows using `src/georisk/schemas/v1/risk_event.schema.json` and `src/georisk/schemas/v1/density_metric.schema.json`.
+
+Invalid records are quarantined by default while valid records continue through the batch. Results include quarantine entries and input/quarantine statistics. The runner always writes quarantine.jsonl, including malformed JSON lines (line number and up to 1,000 raw characters); its timestamps exclude it from the reproducible artifact manifest. Set GEORISK_STRICT_VALIDATION=true (or strict=True in process_events) to raise on invalid input.

@@ -50,6 +50,7 @@ class GeoRiskConfig:
     route_risk_penalty: float = 4.0
     evaluation_fraction: float = 0.2
     acceptance_required: bool = True
+    strict_validation: bool = False
     deployment_mode: str = "local"
     aws_region: str = "us-east-1"
     aws_stack_name: str = "georisk-foundation"
@@ -61,6 +62,8 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if not isinstance(self.strict_validation, bool):
+            raise ValueError("GEORISK_STRICT_VALIDATION must be true or false")
         if self.vessel_count < 0 or self.telemetry_points < 1:
             raise ValueError("vessel_count must be non-negative and telemetry_points positive")
         if not 0 <= self.resolution <= 15:
@@ -98,6 +101,7 @@ class GeoRiskConfig:
             route_risk_penalty=_float(source, "GEORISK_ROUTE_RISK_PENALTY", 4.0),
             evaluation_fraction=_float(source, "GEORISK_EVALUATION_FRACTION", 0.2),
             acceptance_required=_boolean(source, "GEORISK_ACCEPTANCE_REQUIRED", True),
+            strict_validation=_boolean(source, "GEORISK_STRICT_VALIDATION", False),
             deployment_mode=source.get("GEORISK_DEPLOYMENT_MODE", "local").strip().lower(),
             aws_region=source.get("AWS_REGION", "us-east-1").strip(),
             aws_stack_name=source.get("GEORISK_AWS_STACK_NAME", "georisk-foundation").strip(),
