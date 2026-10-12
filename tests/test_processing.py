@@ -108,6 +108,36 @@ def test_density_deduplicates_vessel_per_cell_and_window():
     assert results["density_metrics"][0]["window_start"] == "2026-01-01T12:00:00Z"
 
 
+def test_duplicate_message_produces_one_risk_row():
+    event = _telemetry("vessel", 12, 78)
+    duplicate = dict(event, latitude=14, longitude=80)
+    result = process_events([event, duplicate], [_alert()])
+    assert len(result["risk_events"]) == 1
+    assert result["risk_events"][0]["risk_alert"] is True
+    assert result["stats"]["telemetry_in"] == 2
+    assert result["stats"]["duplicates_dropped"] == 1
+    assert result["quarantine"] == []
+    assert len(result["density_metrics"]) == 1
+    assert result["density_metrics"][0]["unique_vessel_count"] == 1
+
+
+def test_risk_event_carries_event_id_and_coordinates():
+    event = _telemetry("vessel", 12, 78)
+    risk = process_events([event], [])["risk_events"][0]
+    assert {key: risk[key] for key in ("event_id", "latitude", "longitude")} == {
+        key: event[key] for key in ("event_id", "latitude", "longitude")
+    }
+    assert risk["coverage_mode"] == "center"
+
+
+def test_invalid_record_does_not_reserve_event_id():
+    valid = _telemetry("vessel", 12, 78)
+    result = process_events([dict(valid, latitude=100), valid], [])
+    assert len(result["risk_events"]) == 1
+    assert result["stats"]["duplicates_dropped"] == 0
+    assert result["stats"]["quarantined"] == 1
+
+
 def test_processing_rejects_invalid_input():
     event = _telemetry("vessel", 12, 78)
     event["latitude"] = 100

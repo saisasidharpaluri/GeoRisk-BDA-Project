@@ -13,6 +13,7 @@ from georisk.processing.h3_index import DEFAULT_RESOLUTION, point_to_cell, polyg
 
 UTC = timezone.utc
 WINDOW_MINUTES = 15
+COVERAGE_MODE = "center"
 
 
 def _parse_utc(value: str) -> datetime:
@@ -72,6 +73,7 @@ def process_events(
         raise TypeError("strict must be a boolean")
     quarantine = []
     stats = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
+    stats["duplicates_dropped"] = 0
     alert_records = []
     for alert in alerts:
         stats["alerts_in"] += 1
@@ -98,6 +100,7 @@ def process_events(
             coverage.setdefault(cell, []).append((alert, valid_from, valid_until))
 
     risk_events = []
+    seen_event_ids: set[str] = set()
     density_keys: set[tuple[datetime, datetime, str, str]] = set()
     for event in telemetry:
         stats["telemetry_in"] += 1
@@ -108,12 +111,20 @@ def process_events(
                 raise
             quarantine.append(_quarantine_entry("vessel_telemetry", "contract_violation", event, exc))
             continue
+        if event["event_id"] in seen_event_ids:
+            stats["duplicates_dropped"] += 1
+            continue
+        seen_event_ids.add(event["event_id"])
         event_time = _parse_utc(event["event_time"])
         cell = point_to_cell(event["latitude"], event["longitude"], resolution)
         matches = _matching_hazards(cell, event_time, coverage)
         risk_events.append(
             {
                 "schema_version": SCHEMA_VERSION,
+                "event_id": event["event_id"],
+                "latitude": event["latitude"],
+                "longitude": event["longitude"],
+                "coverage_mode": COVERAGE_MODE,
                 "event_time": event["event_time"],
                 "vessel_id": event["vessel_id"],
                 "h3_index": cell,
