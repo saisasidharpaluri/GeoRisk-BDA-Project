@@ -163,6 +163,9 @@ cross-phase acceptance checks for event accounting, risk/density outputs,
 Parquet files, model-vs-baseline metrics, route comparison, and dashboard
 freshness. A rejected validation exits with code 1.
 
+Validation recomputes every manifest entry's SHA-256 digest. Missing or modified
+artifacts fail `artifact_integrity`, with the affected paths in its detail.
+
 ## Phase 8 deployment readiness
 
 Phase 8 adds a read-only deployment readiness plan for the AWS foundation.

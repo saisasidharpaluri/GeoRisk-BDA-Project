@@ -58,6 +58,23 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
     route = report.get("route", {})
     dashboard = report.get("dashboard", {})
 
+    artifacts = report.get("artifacts", [])
+    mismatched = []
+    for entry in artifacts:
+        path = entry.get("path", "")
+        try:
+            matches = bool(path) and sha256_file(path) == entry.get("sha256")
+        except OSError:
+            matches = False
+        if not matches:
+            mismatched.append(str(path))
+    check(
+        "artifact_integrity",
+        bool(artifacts) and not mismatched,
+        "mismatched or missing artifacts: " + ", ".join(mismatched)
+        if mismatched else "all artifact hashes match" if artifacts else "artifact manifest is missing or empty",
+    )
+
     check("run_status", report.get("status") == "success", "pipeline status is success")
     check(
         "generation_accounting",

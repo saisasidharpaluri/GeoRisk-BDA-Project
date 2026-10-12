@@ -125,3 +125,36 @@ def test_validate_report_rejects_invalid_json_and_missing_file(tmp_path):
     invalid.write_text("not-json", encoding="utf-8")
     with pytest.raises(ValueError, match="valid JSON"):
         validate_report(invalid)
+
+
+def test_validate_report_detects_modified_parquet(tmp_path, monkeypatch):
+    from georisk.operations import validate_cli
+
+    config = GeoRiskConfig(
+        input_dir=tmp_path / "data", processed_dir=tmp_path / "processed",
+        lake_dir=tmp_path / "lake", dashboard_dir=tmp_path,
+        report_path=tmp_path / "report.json",
+    )
+    report = run_end_to_end(config)
+    path = Path(report["lake"]["paths"]["risk_events"][0])
+    with path.open("ab") as target:
+        target.write(b"tampered")
+    result = validate_report(config.report_path)
+    check = next(item for item in result["checks"] if item["name"] == "artifact_integrity")
+    assert check["passed"] is False
+    assert str(path) in check["detail"]
+    monkeypatch.setenv("GEORISK_REPORT_PATH", str(config.report_path))
+    with pytest.raises(SystemExit) as exc:
+        validate_cli()
+    assert exc.value.code == 1
+
+
+def test_artifact_integrity_rejects_missing_file(tmp_path):
+    path = tmp_path / "artifact"
+    path.write_bytes(b"original")
+    manifest = artifact_manifest([path])
+    path.unlink()
+    result = acceptance_checks({"artifacts": manifest})
+    check = next(item for item in result["checks"] if item["name"] == "artifact_integrity")
+    assert check["passed"] is False
+    assert str(path) in check["detail"]
