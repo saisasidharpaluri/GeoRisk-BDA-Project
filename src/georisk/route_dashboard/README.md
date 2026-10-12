@@ -88,3 +88,9 @@ includes `coverage_mode` and `h3_resolution`.
 The "Corridor density" tab selects a window (`select_slider`, defaulting to the
 latest), lists its busiest cells, and compares each cell with the previous and
 next windows. The map's extruded density layer shows the selected window.
+
+The "Delay" tab reads `processed/delay-estimates.jsonl` and shows each vessel's
+latest predicted delay, the mean baseline, and the error, all in hours, with
+model vs baseline MAE on held-out rows. "Demo mode: show synthetic ground
+truth" adds the synthetic label column. The panel is labelled as a synthetic
+demonstration and shows a no-data message when the file is missing.

@@ -13,8 +13,9 @@ from georisk.route_dashboard.route_optimizer import (
     demonstration_graph, demonstration_nodes, find_alternative_route,
 )
 from georisk.route_dashboard.views import (
-    active_alerts, compare_adjacent_windows, density_for_window, density_windows,
-    exposure_series, filter_risk_events, latest_positions, latest_risk_by_vessel,
+    active_alerts, compare_adjacent_windows, delay_mae, density_for_window, density_windows,
+    exposure_series, filter_risk_events, latest_delay_estimates, latest_positions,
+    latest_risk_by_vessel,
     risk_table_rows, severity_distribution,
 )
 
@@ -378,6 +379,52 @@ def _render_density_panel(
     return window
 
 
+def load_delay_estimates(processed_dir: str | Path) -> list[dict[str, Any]]:
+    """Load persisted delay estimates; a missing file returns an empty list."""
+    return _read_jsonl(Path(processed_dir) / "delay-estimates.jsonl")
+
+
+def _render_delay_panel(st: Any, estimates: list[dict[str, Any]]) -> None:
+    st.subheader("Delay estimates")
+    st.caption("Synthetic demonstration, not a real-world forecast.")
+    if not estimates:
+        st.info("No delay estimates yet. Run `georisk run` to train the delay model and write "
+                "processed/delay-estimates.jsonl.")
+        return
+    mae = delay_mae(estimates)
+    model_name = estimates[-1].get("model_name", "model")
+    columns = st.columns(3)
+    if mae["model_mae_hours"] is None:
+        columns[0].metric("Model MAE (h)", "—", border=True)
+        columns[1].metric("Baseline MAE (h)", "—", border=True)
+    else:
+        columns[0].metric(
+            f"Model MAE (h) · {model_name}", f"{mae['model_mae_hours']:.2f}", border=True,
+            delta=f"{mae['model_mae_hours'] - mae['baseline_mae_hours']:+.2f} h vs baseline",
+            delta_color="inverse", help="Mean absolute error on held-out rows (lower is better).",
+        )
+        columns[1].metric("Baseline MAE (h)", f"{mae['baseline_mae_hours']:.2f}", border=True,
+                          help="Predicting the training-set mean delay for every row.")
+    columns[2].metric("Held-out rows", mae["evaluation_count"], border=True)
+    show_truth = st.toggle("Demo mode: show synthetic ground truth", key="delay_truth",
+                           help="Adds the synthetic label the model was trained to predict.")
+    columns_shown = ["vessel_id", "event_time", "predicted_delay_hours", "baseline_delay_hours",
+                     "error_hours"] + (["synthetic_label_hours"] if show_truth else [])
+    st.dataframe(
+        latest_delay_estimates(estimates), width="stretch", hide_index=True,
+        column_order=columns_shown,
+        column_config={
+            "vessel_id": st.column_config.TextColumn("Vessel"),
+            "event_time": st.column_config.TextColumn("Latest estimate (UTC)"),
+            "predicted_delay_hours": st.column_config.NumberColumn("Predicted delay (h)", format="%.2f"),
+            "baseline_delay_hours": st.column_config.NumberColumn("Baseline (h)", format="%.2f"),
+            "error_hours": st.column_config.NumberColumn("Error (h)", format="%+.2f",
+                                                         help="Predicted minus synthetic label."),
+            "synthetic_label_hours": st.column_config.NumberColumn("Synthetic label (h)", format="%.2f"),
+        },
+    )
+
+
 def _render_route_panel(st: Any, route: dict[str, Any] | None, route_error: str | None) -> None:
     st.subheader("Route comparison")
     if route_error:
@@ -442,7 +489,10 @@ def main() -> None:
         route, route_error = None, str(exc)
 
     map_column, inspect_column = st.columns([2.6, 1], gap="medium")
-    risk_tab, route_tab, density_tab = st.tabs(["Risk", "Route", "Corridor density"])
+    risk_tab, route_tab, density_tab, delay_tab = st.tabs(
+        ["Risk", "Route", "Corridor density", "Delay"])
+    with delay_tab:
+        _render_delay_panel(st, load_delay_estimates(processed_dir))
     with risk_tab:
         _render_risk_panel(st, data["risk_events"], settings)
     with route_tab:
