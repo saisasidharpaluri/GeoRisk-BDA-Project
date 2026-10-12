@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from pyspark.sql import DataFrame, SparkSession, functions as F, types as T
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
 from georisk.contracts import validate_event
 from georisk.processing.h3_index import COVERAGE_MODES, _validate_resolution, polygon_to_cells
@@ -99,7 +101,7 @@ def make_h3_udf(resolution: int) -> Any:
         return pd.Series(
             [
                 h3.latlng_to_cell(float(lat), float(lon), resolution)
-                for lat, lon in zip(latitude, longitude)
+                for lat, lon in zip(latitude, longitude, strict=False)
             ]
         )
 

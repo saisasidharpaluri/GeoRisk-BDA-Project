@@ -34,7 +34,7 @@ def run_acceptance_scenarios(
     allowed_lateness_minutes: int,
 ) -> list[dict[str, Any]]:
     """Exercise spatial, temporal, deduplication, and route behavior in memory."""
-    settings = dict(
+    settings: dict[str, Any] = dict(
         resolution=resolution,
         coverage_mode=coverage_mode,
         window_minutes=window_minutes,

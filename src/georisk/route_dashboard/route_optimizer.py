@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Mapping
+from typing import Any
 
 from georisk.geo_demo import DEMO_NODES, DEMO_SPEED_KNOTS, haversine_nm
 
@@ -37,7 +38,7 @@ def demonstration_nodes() -> dict[str, tuple[float, float]]:
 
 def demonstration_graph() -> dict[str, list[dict[str, Any]]]:
     """Return the documented four-node synthetic sea-lane graph."""
-    graph = {
+    graph: dict[str, list[dict[str, Any]]] = {
         "port_a": [
             {"to": "chokepoint", "risk": 0.9},
             {"to": "outer_lane", "risk": 0.1},
@@ -58,7 +59,7 @@ def demonstration_graph() -> dict[str, list[dict[str, Any]]]:
     return graph
 
 
-def _validate_graph(graph: Mapping[str, list[Mapping[str, Any]]]) -> None:
+def _validate_graph(graph: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
     if not isinstance(graph, Mapping) or not graph:
         raise ValueError("graph must be a non-empty mapping")
     for source, edges in graph.items():
@@ -81,7 +82,7 @@ def _validate_graph(graph: Mapping[str, list[Mapping[str, Any]]]) -> None:
 
 
 def _shortest_path(
-    graph: Mapping[str, list[Mapping[str, Any]]],
+    graph: Mapping[str, Sequence[Mapping[str, Any]]],
     origin: str,
     destination: str,
     risk_threshold: float | None,
@@ -118,7 +119,7 @@ def _shortest_path(
 
 
 def find_alternative_route(
-    graph: Mapping[str, list[Mapping[str, Any]]],
+    graph: Mapping[str, Sequence[Mapping[str, Any]]],
     origin: str,
     destination: str,
     risk_threshold: float,
@@ -147,7 +148,7 @@ def find_alternative_route(
     )
     baseline_blocked = [
         (source, target)
-        for source, target in zip(baseline.path, baseline.path[1:])
+        for source, target in zip(baseline.path, baseline.path[1:], strict=False)
         if (source, target) in blocked
     ]
     if baseline_blocked:

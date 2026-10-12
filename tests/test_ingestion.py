@@ -6,9 +6,9 @@ import pytest
 from georisk.contracts import ContractValidationError
 from georisk.ingestion.generator import (
     generate_events,
+    iter_events,
     replay_events,
     write_jsonl,
-    iter_events,
 )
 from georisk.ingestion.kinesis_producer import publish_event
 
@@ -199,7 +199,7 @@ def test_displacement_matches_speed():
     telemetry = generate_events(7, 8, telemetry_points=4)["telemetry"]
     for index in range(8):
         track = [row for row in telemetry if row["vessel_id"] == f"vessel-{index:05d}"]
-        for a, b in zip(track, track[1:]):
+        for a, b in zip(track, track[1:], strict=False):
             distance = haversine_nm(a["latitude"], a["longitude"], b["latitude"], b["longitude"])
             assert distance == pytest.approx(a["speed_knots"] * 300 / 3600, rel=0.1)
 

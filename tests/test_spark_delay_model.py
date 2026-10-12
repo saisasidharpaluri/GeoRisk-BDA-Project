@@ -56,7 +56,7 @@ def test_gbt_result_shape_matches_linear(fitted_gbt):
     assert result["baseline_predictions"] == [mean] * len(evaluation)
     errors = [
         prediction - row["delay_hours"]
-        for prediction, row in zip(result["predictions"], evaluation)
+        for prediction, row in zip(result["predictions"], evaluation, strict=False)
     ]
     assert result["model_metrics"]["mae"] == pytest.approx(
         sum(abs(error) for error in errors) / len(errors)

@@ -7,7 +7,7 @@ from importlib.resources import files
 
 import pytest
 
-from georisk.contracts import ContractValidationError, SUPPORTED_CONTRACTS, validate_event
+from georisk.contracts import SUPPORTED_CONTRACTS, ContractValidationError, validate_event
 
 EXAMPLES = files("georisk") / "schemas" / "v1" / "examples"
 VALID = sorted((EXAMPLES / "valid").iterdir(), key=lambda path: path.name)

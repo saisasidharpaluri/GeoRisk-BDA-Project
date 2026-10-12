@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import importlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
-from typing import Any, Sequence
+from collections.abc import Sequence
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
 
 from georisk.config import GeoRiskConfig, load_env_file
 from georisk.logging_utils import configure_logging
@@ -47,7 +48,14 @@ def _parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name, help=description, description=description)
         command.add_argument("--env-file", default=argparse.SUPPRESS)
 
-        def option(flag: str, env: str, *, aliases: tuple[str, ...] = (), **kwargs: Any) -> None:
+        def option(
+            flag: str,
+            env: str,
+            *,
+            aliases: tuple[str, ...] = (),
+            command: argparse.ArgumentParser = command,
+            **kwargs: Any,
+        ) -> None:
             command.add_argument(
                 flag,
                 *aliases,

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Mapping, Iterable
+from typing import Any
 
 import h3
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -54,11 +54,11 @@ def _time_key(value: Any) -> datetime | str:
     raise ValueError("event_time must be a datetime or ISO timestamp")
 
 
-def _matrix(records: list[Mapping[str, Any]]) -> list[list[float]]:
+def _matrix(records: Sequence[Mapping[str, Any]]) -> list[list[float]]:
     return [[1.0] + [float(record[name]) for name in FEATURES] for record in records]
 
 
-def _validate_rows(records: list[Mapping[str, Any]], *, require_label: bool = True) -> None:
+def _validate_rows(records: Sequence[Mapping[str, Any]], *, require_label: bool = True) -> None:
     if not records:
         raise ValueError("training and evaluation data cannot be empty")
     for record in records:
@@ -77,11 +77,11 @@ def _solve_ridge(
     size = len(matrix[0])
     normal = [[0.0] * size for _ in range(size)]
     vector = [0.0] * size
-    for row, label in zip(matrix, labels):
+    for features, label in zip(matrix, labels, strict=False):
         for i in range(size):
-            vector[i] += row[i] * label
+            vector[i] += features[i] * label
             for j in range(size):
-                normal[i][j] += row[i] * row[j]
+                normal[i][j] += features[i] * features[j]
     for index in range(1, size):
         normal[index][index] += penalty
     for pivot in range(size):
@@ -97,7 +97,10 @@ def _solve_ridge(
             if row == pivot:
                 continue
             factor = normal[row][pivot]
-            normal[row] = [left - factor * right for left, right in zip(normal[row], normal[pivot])]
+            normal[row] = [
+                left - factor * right
+                for left, right in zip(normal[row], normal[pivot], strict=False)
+            ]
             vector[row] -= factor * vector[pivot]
     return vector
 
@@ -116,11 +119,11 @@ def predict(
     if not records:
         return []
     _validate_rows(records, require_label=False)
-    return [sum(a * b for a, b in zip(row, weights)) for row in _matrix(records)]
+    return [sum(a * b for a, b in zip(row, weights, strict=False)) for row in _matrix(records)]
 
 
 def _metrics(actual: list[float], predicted: list[float]) -> dict[str, float]:
-    errors = [prediction - target for target, prediction in zip(actual, predicted)]
+    errors = [prediction - target for target, prediction in zip(actual, predicted, strict=False)]
     return {
         "mae": sum(abs(error) for error in errors) / len(errors),
         "rmse": math.sqrt(sum(error * error for error in errors) / len(errors)),

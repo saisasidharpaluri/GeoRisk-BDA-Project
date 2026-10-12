@@ -5,12 +5,12 @@ import pytest
 from georisk.route_dashboard.views import (
     ROUTE_SCENARIOS,
     active_alerts,
-    exposure_series,
     compare_adjacent_windows,
     daily_history,
     delay_mae,
     density_for_window,
     density_windows,
+    exposure_series,
     filter_risk_events,
     freshness,
     lane_status,

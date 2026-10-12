@@ -11,15 +11,17 @@ from typing import Any
 from georisk.config import GeoRiskConfig, load_env_file
 from georisk.contracts import SCHEMA_VERSION
 from georisk.geo_demo import DEMO_NODES
-from georisk.logging_utils import configure_logging
 from georisk.ingestion.generator import write_jsonl
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
+from georisk.logging_utils import configure_logging
+from georisk.operations import acceptance_checks, artifact_manifest
 from georisk.processing.stream_job import run_streaming_job
 from georisk.route_dashboard.dashboard import (
     dashboard_route,
     dashboard_summary,
     load_dashboard_data,
 )
+from georisk.scenarios import run_acceptance_scenarios
 from georisk.storage_analytics.delay_features import build_delay_rows
 from georisk.storage_analytics.delay_model import (
     FEATURES,
@@ -28,9 +30,6 @@ from georisk.storage_analytics.delay_model import (
     train_and_evaluate,
 )
 from georisk.storage_analytics.lake import density_summary, risk_summary, write_partitioned
-from georisk.operations import acceptance_checks, artifact_manifest
-from georisk.scenarios import run_acceptance_scenarios
-
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +146,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "synthetic_label_hours": row["delay_hours"],
             **{feature: row[feature] for feature in FEATURES},
         }
-        for index, (row, prediction) in enumerate(zip(all_rows, predictions))
+        for index, (row, prediction) in enumerate(zip(all_rows, predictions, strict=False))
     ]
     lake_paths["delay_estimates"] = write_partitioned(
         estimates,

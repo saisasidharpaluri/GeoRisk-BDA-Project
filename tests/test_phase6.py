@@ -63,8 +63,8 @@ def test_env_file_rejects_malformed_assignment_without_partial_application(tmp_p
 
 
 def test_legacy_clis_load_selected_env_file(tmp_path, monkeypatch, capsys):
-    from georisk.pipeline import run_cli
     from georisk.operations import validate_cli
+    from georisk.pipeline import run_cli
 
     path = tmp_path / "demo.env"
     report_path = tmp_path / "report.json"

@@ -37,7 +37,7 @@ def build_delay_rows(
         or noise_std_hours < 0
     ):
         raise ValueError("noise_std_hours must be a non-negative finite number")
-    telemetry_by_id = {}
+    telemetry_by_id: dict[str, Mapping[str, Any]] = {}
     for event in telemetry:
         telemetry_by_id.setdefault(event["event_id"], event)
     density_by_window_cell = {

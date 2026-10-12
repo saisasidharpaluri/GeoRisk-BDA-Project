@@ -54,7 +54,12 @@ _CSS = """
 .gr-legend { display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; margin: .45rem 0 0;
   font: 500 .74rem/1.4 'IBM Plex Mono', monospace; color: var(--gr-ink); }
 .gr-legend span { white-space: nowrap; }
-.gr-key { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; }
+.gr-key { display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  }
 .gr-key.dot { border-radius: 50%; box-shadow: 0 0 0 1.5px var(--gr-paper) inset; }
 .gr-key.zone { background: rgba(168,22,111,.16); border: 2px solid var(--gr-magenta); }
 .gr-key.hex { clip-path: polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%); }
@@ -83,7 +88,9 @@ _CSS = """
   font-family: 'IBM Plex Mono', monospace; font-weight: 600; padding-top: 0; }
 .stTabs [data-baseweb="tab"] p { font-family: 'Archivo', sans-serif; font-stretch: 87.5%;
   font-weight: 650; font-size: .98rem; letter-spacing: .02em; }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important;
+  transition: none !important;
+  } }
 </style>
 """
 
@@ -91,8 +98,10 @@ _LEGEND = {
     "vessels": '<span><i class="gr-key dot" style="background:#14232E"></i>Vessel</span>'
     '<span><i class="gr-key dot" style="background:#E03A1E"></i>Vessel in hazard</span>',
     "hazards": '<span><i class="gr-key zone"></i>Active hazard zone</span>',
-    "risk_cells": '<span><i class="gr-key hex" style="background:#A8166F"></i>Alerted H3 cell</span>',
-    "density": '<span><i class="gr-key hex" style="background:linear-gradient(90deg,#9CC9DB,#1D5C80)">'
+    "risk_cells": '<span><i class="gr-key hex" style="background:#A8166F"></i>'
+    "Alerted H3 cell</span>",
+    "density": '<span><i class="gr-key hex" '
+    'style="background:linear-gradient(90deg,#9CC9DB,#1D5C80)">'
     "</i>Vessels per cell (height)</span>",
     "route": '<span><i class="gr-key line" style="background:#5B6B78"></i>Baseline (fastest)</span>'
     '<span><i class="gr-key line" style="background:#0E7C66"></i>Alternative (risk-aware)</span>',
@@ -141,7 +150,7 @@ def dashboard_summary(
     """Create metric values and freshness information for UI or API use."""
     risk_events = data.get("risk_events", [])
     latest_values = [
-        row.get("event_time")
+        row["event_time"]
         for row in (*data.get("telemetry", []), *risk_events)
         if row.get("event_time")
     ]
@@ -770,6 +779,7 @@ def _render_route_panel(
         st.success(route["explanation"], icon=":material/check_circle:")
     penalty = route["risk_penalty"]
     legs = {name: route[name] for name in ("baseline", "alternative")}
+    costs = {name: leg["travel_hours"] + penalty * leg["risk_score"] for name, leg in legs.items()}
     st.table(
         {
             "": ["Path", "Travel time (h)", "Total risk", f"Total cost (h + {penalty:g} × risk)"],
@@ -777,13 +787,13 @@ def _render_route_panel(
                 _path_label(legs["baseline"]["path"]),
                 f"{legs['baseline']['travel_hours']:.2f}",
                 f"{legs['baseline']['risk_score']:.2f}",
-                f"{legs['baseline']['travel_hours'] + penalty * legs['baseline']['risk_score']:.2f}",
+                f"{costs['baseline']:.2f}",
             ],
             "Alternative · risk-aware": [
                 _path_label(legs["alternative"]["path"]),
                 f"{legs['alternative']['travel_hours']:.2f}",
                 f"{legs['alternative']['risk_score']:.2f}",
-                f"{legs['alternative']['travel_hours'] + penalty * legs['alternative']['risk_score']:.2f}",
+                f"{costs['alternative']:.2f}",
             ],
         },
         hide_index=True,

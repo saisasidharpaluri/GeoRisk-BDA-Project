@@ -6,17 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from georisk.contracts import ContractValidationError, load_schema, validate_event
 from georisk.config import GeoRiskConfig
+from georisk.contracts import ContractValidationError, load_schema, validate_event
 from georisk.geo_demo import DEMO_NODES, haversine_nm
 from georisk.ingestion.generator import generate_events
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
-from georisk.processing.stream_job import process_events
 from georisk.pipeline import run_end_to_end
-from georisk.storage_analytics.delay_features import build_delay_rows
+from georisk.processing.stream_job import process_events
 from georisk.storage_analytics.arrow_schemas import ARROW_SCHEMAS
-from georisk.storage_analytics.lake import CONTRACT_BY_DATASET
-
+from georisk.storage_analytics.delay_features import build_delay_rows
 from georisk.storage_analytics.delay_model import (
     FEATURES,
     make_synthetic_label,
@@ -25,6 +23,7 @@ from georisk.storage_analytics.delay_model import (
     train_and_evaluate,
 )
 from georisk.storage_analytics.lake import (
+    CONTRACT_BY_DATASET,
     density_summary,
     read_dataset,
     risk_summary,
@@ -126,7 +125,9 @@ def test_batch_spanning_midnight_creates_two_partitions(tmp_path, dataset):
         "delay_estimates": [_delay_estimate(0), _delay_estimate(1)],
     }[dataset]
     timestamp_field = "window_start" if dataset == "density_metrics" else "event_time"
-    for record, timestamp in zip(records, ["2026-01-01T23:50:00Z", "2026-01-02T00:00:00Z"]):
+    for record, timestamp in zip(
+        records, ["2026-01-01T23:50:00Z", "2026-01-02T00:00:00Z"], strict=False
+    ):
         record[timestamp_field] = timestamp
         if dataset == "density_metrics":
             record["window_end"] = (

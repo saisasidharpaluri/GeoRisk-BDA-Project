@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import io
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 from urllib.parse import urlparse
 
 import pyarrow as pa
@@ -50,7 +51,7 @@ def _validate_event_date(event_date: str) -> str:
     return parsed.isoformat()
 
 
-def _dataset_name(records: list[Mapping[str, Any]], explicit: str | None) -> str:
+def _dataset_name(records: Sequence[Mapping[str, Any]], explicit: str | None) -> str:
     if explicit:
         if explicit not in CONTRACT_BY_DATASET:
             raise ValueError(f"Unsupported dataset '{explicit}'")
@@ -71,7 +72,7 @@ def _dataset_name(records: list[Mapping[str, Any]], explicit: str | None) -> str
     raise ValueError("unable to infer dataset name from record fields")
 
 
-def _validate_records(records: list[Mapping[str, Any]], dataset_name: str) -> None:
+def _validate_records(records: Sequence[Mapping[str, Any]], dataset_name: str) -> None:
     contract = CONTRACT_BY_DATASET[dataset_name]
     for record in records:
         validate_event(contract, record)

@@ -31,6 +31,12 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(fields, sort_keys=True, default=str)
 
 
+class _JsonHandler(logging.StreamHandler):
+    """Identify handlers owned by this package."""
+
+    _georisk_json = True
+
+
 def configure_logging(level: str | None = None) -> None:
     """Install one GeoRisk stderr handler without changing host handlers."""
     selected = (level if level is not None else os.environ.get("GEORISK_LOG_LEVEL", "INFO")).upper()
@@ -41,8 +47,7 @@ def configure_logging(level: str | None = None) -> None:
         if getattr(handler, "_georisk_json", False):
             logger.removeHandler(handler)
             handler.close()
-    handler = logging.StreamHandler(sys.stderr)
-    handler._georisk_json = True
+    handler = _JsonHandler(sys.stderr)
     handler.setFormatter(JsonFormatter())
     logger.addHandler(handler)
     logger.setLevel(selected)

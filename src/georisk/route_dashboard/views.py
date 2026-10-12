@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from georisk.geo_demo import DEMO_NODES
 
@@ -301,7 +302,7 @@ def lane_status(
     threshold = route["risk_threshold"]
 
     def legs(path: list[str]) -> set[tuple[str, str]]:
-        return set(zip(path, path[1:]))
+        return set(zip(path, path[1:], strict=False))
 
     baseline, alternative = legs(route["baseline"]["path"]), legs(route["alternative"]["path"])
     rows = []

@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
-from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
+from georisk.contracts import SCHEMA_VERSION, ContractValidationError, validate_event
 from georisk.processing.h3_index import (
     COVERAGE_MODES,
     DEFAULT_COVERAGE_MODE,
@@ -103,7 +104,7 @@ def process_events(
     }
     logger.info("Processing batch", extra={"georisk": settings})
     quarantine = []
-    stats = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
+    stats: dict[str, Any] = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
     stats["duplicates_dropped"] = 0
     stats["late_dropped"] = 0
     max_event_time: datetime | None = None
@@ -169,7 +170,8 @@ def process_events(
                     "late_event",
                     event,
                     ValueError(
-                        f"event_time precedes watermark {_timestamp(max_event_time - allowed_lateness)}"
+                        "event_time precedes watermark "
+                        f"{_timestamp(max_event_time - allowed_lateness)}"
                     ),
                 )
             )

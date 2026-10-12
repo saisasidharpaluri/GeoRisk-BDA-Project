@@ -1,4 +1,5 @@
 import copy
+
 import pytest
 
 from georisk.config import GeoRiskConfig

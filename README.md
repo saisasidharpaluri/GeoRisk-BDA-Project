@@ -265,3 +265,21 @@ implementation and is retained as an archival artifact.
 - [Limitations](docs/limitations.md)
 - [Evaluation](docs/evaluation.md)
 - [Architecture](docs/architecture.md)
+
+## Development checks
+
+```powershell
+python -m pip install -e ".[test,dashboard,dev]" -c constraints.txt
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy src
+python -m pytest -q
+python -m pre_commit install
+```
+
+Ruff checks Python 3.10-compatible syntax and 100-column formatting. Hooks use
+Ruff's pinned check and format versions. AWS-owned `deployment.py` and
+`kinesis_producer.py` are excluded from Ruff changes; the S3 key expression in
+`lake.py` retains its existing line length. Mypy checks all source modules,
+allowing missing third-party stubs. Tests guard behavior through these
+mechanical cleanups; optional dependencies have explicit skip reasons.

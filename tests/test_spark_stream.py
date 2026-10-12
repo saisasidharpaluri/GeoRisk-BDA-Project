@@ -106,7 +106,10 @@ def test_stream_density_equals_batch_density_after_two_batches(spark, tmp_path, 
     run(spark, tmp_path)
     rows = without_date(read_dataset(tmp_path / "output", "density_metrics"))
     expected = process_events(first + second, [])["density_metrics"]
-    key = lambda row: (row["window_start"], row["h3_index"])
+
+    def key(row):
+        return (row["window_start"], row["h3_index"])
+
     assert sorted(rows, key=key) == sorted(expected, key=key)
 
 
@@ -191,7 +194,10 @@ def test_stream_recovers_after_sink_writes_before_checkpoint_commit(
     assert len(read_dataset(tmp_path / "output", "risk_events")) == len(telemetry)
     run(spark, tmp_path)
     assert len(read_dataset(tmp_path / "output", "risk_events")) == len(telemetry)
-    key = lambda row: (row["window_start"], row["h3_index"])
+
+    def key(row):
+        return (row["window_start"], row["h3_index"])
+
     assert sorted(
         without_date(read_dataset(tmp_path / "output", "density_metrics")), key=key
     ) == sorted(process_events(telemetry, [])["density_metrics"], key=key)

@@ -21,6 +21,12 @@ georisk-validate = "georisk.operations:validate_cli"
 georisk-deployment-check = "georisk.deployment:deployment_cli"
 
 [project.optional-dependencies]
+dev = [
+    "ruff==0.17.0",
+    "mypy==2.4.0",
+    "pytest-cov==7.1.0",
+    "pre-commit==4.6.2",
+]
 spark = [
     "pyspark>=3.5.4,<3.6",
     "pandas>=2,<3",
@@ -45,3 +51,27 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 georisk = ["schemas/README.md", "schemas/v1/*.json", "schemas/v1/examples/README.md", "schemas/v1/examples/*/*.json", "storage_analytics/sql/*.sql", "route_dashboard/theme.toml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+force-exclude = true
+# AWS deployment and client code are maintained by the AWS workstream.
+extend-exclude = [".venv-spark", ".runtime-spark", ".runtime-packages", "output", "src/georisk/deployment.py", "src/georisk/ingestion/kinesis_producer.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.ruff.lint.per-file-ignores]
+# Optional dependency guards must run before importing their consumers.
+"tests/test_spark_delay_model.py" = ["E402"]
+"tests/test_spark_stream.py" = ["E402"]
+"tests/test_spark_transforms.py" = ["E402"]
+"tests/test_sql.py" = ["E402"]
+# The AWS key expression is outside this phase's edit scope.
+"src/georisk/storage_analytics/lake.py" = ["E501"]

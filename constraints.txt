@@ -5,3 +5,7 @@ pytest==8.4.2
 streamlit==1.65.0
 pydeck==0.9.3
 duckdb==1.5.6
+ruff==0.17.0
+mypy==2.4.0
+pytest-cov==7.1.0
+pre-commit==4.6.2

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from html import escape
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import pydeck as pdk
 
@@ -35,7 +36,9 @@ def _tooltip(title: str, *lines: str) -> str:
 
 def _ramp(fraction: float, alpha: int) -> list[int]:
     fraction = min(1.0, max(0.0, fraction))
-    return [round(a + (b - a) * fraction) for a, b in zip(SHOAL_BLUE, DEEP_BLUE)] + [alpha]
+    return [round(a + (b - a) * fraction) for a, b in zip(SHOAL_BLUE, DEEP_BLUE, strict=False)] + [
+        alpha
+    ]
 
 
 def vessels_layer(

@@ -77,7 +77,7 @@ def _query(connection, name: str) -> list[dict[str, Any]]:
     sql = (files("georisk") / "storage_analytics" / "sql" / name).read_text(encoding="utf-8")
     cursor = connection.execute(sql)
     columns = [column[0] for column in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
 
 
 def test_risk_summary_sql_matches_python_summary(sql_lake):

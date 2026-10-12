@@ -10,7 +10,9 @@ from pyspark.ml import Pipeline, PipelineModel
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.regression import GBTRegressor
-from pyspark.sql import DataFrame, SparkSession, functions as F, types as T
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
 from georisk.storage_analytics.delay_model import FEATURES, LABEL, _validate_rows
 

@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import logging
+import math
 import os
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
-from georisk.logging_utils import configure_logging
 from georisk.config import load_env_file
+from georisk.logging_utils import configure_logging
 from georisk.scenarios import expected_scenario_names
 
 logger = logging.getLogger(__name__)
@@ -82,10 +83,10 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
     for entry in artifacts:
         path = entry.get("path", "")
         try:
-            matches = bool(path) and sha256_file(path) == entry.get("sha256")
+            hash_matches = bool(path) and sha256_file(path) == entry.get("sha256")
         except OSError:
-            matches = False
-        if not matches:
+            hash_matches = False
+        if not hash_matches:
             mismatched.append(str(path))
     check(
         "artifact_integrity",

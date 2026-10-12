@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import math
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 from georisk.logging_utils import LOG_LEVELS
 
@@ -100,12 +100,12 @@ class GeoRiskConfig:
     def __post_init__(self) -> None:
         if self.delay_model not in ("linear", "gbt"):
             raise ValueError("GEORISK_DELAY_MODEL must be linear or gbt")
-        for name, value in (
+        for name, path_value in (
             ("GEORISK_ENV_FILE", self.env_file),
             ("GEORISK_SPARK_OUTPUT_DIR", self.spark_output_dir),
             ("GEORISK_SPARK_CHECKPOINT_DIR", self.spark_checkpoint_dir),
         ):
-            if not isinstance(value, Path):
+            if not isinstance(path_value, Path):
                 raise ValueError(f"{name} must be a Path")
         if (
             not isinstance(self.delay_noise_std_hours, (int, float))
@@ -174,7 +174,7 @@ class GeoRiskConfig:
             raise ValueError("GEORISK_AWS_STACK_NAME cannot be empty")
 
     @classmethod
-    def from_env(cls, values: Mapping[str, str] | None = None) -> "GeoRiskConfig":
+    def from_env(cls, values: Mapping[str, str] | None = None) -> GeoRiskConfig:
         """Build configuration from environment variables without reading secrets."""
         source = os.environ if values is None else values
         return cls(

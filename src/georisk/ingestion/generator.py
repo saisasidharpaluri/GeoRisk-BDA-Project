@@ -6,13 +6,14 @@ import json
 import math
 import random
 import time
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
-from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
+from georisk.contracts import SCHEMA_VERSION, ContractValidationError, validate_event
 from georisk.geo_demo import DEMO_NODES, DEMO_PATHS, haversine_nm, initial_bearing_deg
 
 UTC = timezone.utc
@@ -88,7 +89,7 @@ def _vessel_track(
     waypoints = [DEMO_NODES[node] for node in path]
     target_index = 1
     if position is None:
-        lengths = [haversine_nm(*a, *b) for a, b in zip(waypoints, waypoints[1:])]
+        lengths = [haversine_nm(*a, *b) for a, b in zip(waypoints, waypoints[1:], strict=False)]
         # Leave the short port approach outside the offshore telemetry box.
         distance = rng.uniform(0.06, 0.95) * sum(lengths)
         while distance > lengths[target_index - 1]:

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from functools import lru_cache
+from functools import cache
 from importlib.resources import files
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator, FormatChecker
-from jsonschema.exceptions import SchemaError, ValidationError
+from jsonschema.exceptions import SchemaError
 
 if TYPE_CHECKING:
     from importlib.abc import Traversable
@@ -58,7 +59,7 @@ def load_schema(contract: str) -> dict[str, Any]:
     return schema
 
 
-@lru_cache(maxsize=None)
+@cache
 def _validator(contract: str) -> Draft202012Validator:
     """Build one reusable validator per contract."""
     return Draft202012Validator(load_schema(contract), format_checker=FORMAT_CHECKER)

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +22,7 @@ def spark():
     if shutil.which("java") is None:
         pytest.skip("Java is required for Spark tests; install Java 17")
     import os
+
     from georisk.spark_session import get_spark
 
     os.environ.setdefault("PYSPARK_PYTHON", sys.executable)

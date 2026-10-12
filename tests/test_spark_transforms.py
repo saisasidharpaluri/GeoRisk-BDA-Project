@@ -129,7 +129,10 @@ def test_spark_density_matches_process_events(spark, tmp_path, scenario, minutes
     valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry + telemetry[:1]))
     rows = density(assign_h3(valid, 7), minutes).collect()
     expected = process_events(telemetry, [], window_minutes=minutes)["density_metrics"]
-    key = lambda row: (row["window_start"], row["h3_index"])
+
+    def key(row):
+        return (row["window_start"], row["h3_index"])
+
     assert sorted((row.asDict() for row in rows), key=key) == sorted(expected, key=key)
 
 
