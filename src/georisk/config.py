@@ -4,11 +4,32 @@ from __future__ import annotations
 
 import os
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
 from georisk.logging_utils import LOG_LEVELS
+
+
+def load_env_file(path: str | Path = ".env", *, override: bool = False) -> dict[str, str]:
+    """Apply literal KEY=VALUE settings, preserving shell values by default."""
+    target = Path(path)
+    parsed: dict[str, str] = {}
+    for line_number, raw in enumerate(target.read_text(encoding="utf-8-sig").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or "\x00" in value:
+            raise ValueError(f"invalid environment assignment in {target}:{line_number}")
+        if len(value) >= 2 and value[0] in ("'", '"') and value[-1] == value[0]:
+            value = value[1:-1]
+        parsed[key] = value
+    applied = {key: value for key, value in parsed.items() if override or key not in os.environ}
+    os.environ.update(applied)
+    return applied
 
 
 def _integer(values: Mapping[str, str], name: str, default: int) -> int:
@@ -41,6 +62,7 @@ class GeoRiskConfig:
     """Validated settings shared by all local pipeline stages."""
 
     seed: int = 7
+    env_file: Path = Path(".env")
     vessel_count: int = 10
     telemetry_points: int = 3
     scenario_duration_minutes: int = 120
@@ -80,6 +102,7 @@ class GeoRiskConfig:
         if self.delay_model not in ("linear", "gbt"):
             raise ValueError("GEORISK_DELAY_MODEL must be linear or gbt")
         for name, value in (
+            ("GEORISK_ENV_FILE", self.env_file),
             ("GEORISK_SPARK_OUTPUT_DIR", self.spark_output_dir),
             ("GEORISK_SPARK_CHECKPOINT_DIR", self.spark_checkpoint_dir),
         ):
@@ -145,6 +168,7 @@ class GeoRiskConfig:
         """Build configuration from environment variables without reading secrets."""
         source = os.environ if values is None else values
         return cls(
+            env_file=Path(source.get("GEORISK_ENV_FILE", ".env")),
             seed=_integer(source, "GEORISK_SEED", 7),
             vessel_count=_integer(source, "GEORISK_VESSEL_COUNT", 10),
             telemetry_points=_integer(source, "GEORISK_TELEMETRY_POINTS", 3),

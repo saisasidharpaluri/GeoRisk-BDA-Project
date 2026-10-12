@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
-from georisk.config import GeoRiskConfig
+from georisk.config import GeoRiskConfig, load_env_file
 from georisk.contracts import SCHEMA_VERSION
 from georisk.geo_demo import DEMO_NODES
 from georisk.logging_utils import configure_logging
@@ -196,6 +197,9 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
 
 def run_cli() -> None:
     """Console entry point for a configured local demonstration run."""
+    env_file = Path(os.environ.get("GEORISK_ENV_FILE", ".env"))
+    if env_file.is_file():
+        load_env_file(env_file)
     settings = GeoRiskConfig.from_env()
     configure_logging(settings.log_level)
     report = run_end_to_end(settings)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from georisk.logging_utils import configure_logging
+from georisk.config import load_env_file
 from georisk.scenarios import expected_scenario_names
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,9 @@ def validate_report(report_path: str | Path) -> dict[str, Any]:
 
 def validate_cli() -> None:
     """Validate the configured Phase 7 report from the command line."""
+    env_file = Path(os.environ.get("GEORISK_ENV_FILE", ".env"))
+    if env_file.is_file():
+        load_env_file(env_file)
     configure_logging()
     report_path = os.environ.get("GEORISK_REPORT_PATH", "output/reports/phase6-run.json")
     result = validate_report(report_path)

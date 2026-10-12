@@ -1,8 +1,9 @@
 import json
+import os
 
 import pytest
 
-from georisk.config import GeoRiskConfig
+from georisk.config import GeoRiskConfig, load_env_file
 from georisk.pipeline import run_end_to_end
 
 
@@ -33,6 +34,53 @@ def test_config_loads_and_validates_environment_values(tmp_path):
     assert config.telemetry_interval_seconds == 120
     assert config.evaluation_fraction == 0.25
     assert config.acceptance_required is True
+
+
+def test_env_file_loaded_without_overriding_shell(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    path.write_text("GEORISK_SEED=19\nGEORISK_VESSEL_COUNT=4\n")
+    monkeypatch.setattr(os, "environ", {"GEORISK_SEED": "11"})
+    assert load_env_file(path) == {"GEORISK_VESSEL_COUNT": "4"}
+    assert GeoRiskConfig.from_env().seed == 11
+    assert load_env_file(path, override=True) == {"GEORISK_SEED": "19", "GEORISK_VESSEL_COUNT": "4"}
+    assert GeoRiskConfig.from_env().seed == 19
+
+
+def test_env_file_ignores_comments_and_quotes(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    path.write_text('\n # comment\n A = "hello world"\nB=\'x=y#literal\'\nC=\n', encoding="utf-8")
+    monkeypatch.setattr(os, "environ", {})
+    assert load_env_file(path) == {"A": "hello world", "B": "x=y#literal", "C": ""}
+
+
+def test_env_file_rejects_malformed_assignment_without_partial_application(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    path.write_text("GEORISK_SEED=99\ninvalid assignment\n")
+    monkeypatch.setattr(os, "environ", {})
+    with pytest.raises(ValueError, match=":2"):
+        load_env_file(path)
+    assert "GEORISK_SEED" not in os.environ
+
+
+def test_legacy_clis_load_selected_env_file(tmp_path, monkeypatch, capsys):
+    from georisk.pipeline import run_cli
+    from georisk.operations import validate_cli
+
+    path = tmp_path / "demo.env"
+    report_path = tmp_path / "report.json"
+    values = {"GEORISK_INPUT_DIR": str(tmp_path / "inputs"),
+              "GEORISK_OUTPUT_DIR": str(tmp_path / "processed"),
+              "GEORISK_LAKE_DIR": str(tmp_path / "lake"),
+              "GEORISK_REPORT_PATH": str(report_path), "GEORISK_SEED": "19"}
+    path.write_text("\n".join(f"{key}={value}" for key, value in values.items()))
+    monkeypatch.setattr(os, "environ", {"GEORISK_ENV_FILE": str(path)})
+    run_cli()
+    assert json.loads(report_path.read_text())["config"]["seed"] == 19
+    for key in values:
+        os.environ.pop(key)
+    validate_cli()
+    assert os.environ["GEORISK_REPORT_PATH"] == str(report_path)
+    assert '"accepted"' in capsys.readouterr().out
 
 
 def test_config_rejects_invalid_values():
