@@ -36,3 +36,8 @@ Invalid records are quarantined by default while valid records continue through 
 Risk rows carry the source event_id, latitude, longitude, and coverage_mode. Only the first valid telemetry record per event_id is processed in each batch; later copies are counted in duplicates_dropped without quarantine or density inflation.
 
 A re-issued alert replaces the earlier version for the whole batch. Among valid alerts sharing an alert_id, the latest event_time wins; ties keep the later input record. Superseded valid versions are counted in alert_revisions_superseded, and coverage is computed only for the retained versions.
+
+Density windows default to 15 minutes. Set GEORISK_DENSITY_WINDOW_MINUTES
+(or `window_minutes` in the processor/runner) to an integer from 1 to 1440
+that divides 1440. Windows are UTC epoch-aligned, half-open intervals;
+60- and 120-minute windows therefore group correctly across hour boundaries.

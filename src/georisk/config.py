@@ -42,6 +42,7 @@ class GeoRiskConfig:
     telemetry_points: int = 3
     resolution: int = 7
     coverage_mode: str = "overlap"
+    density_window_minutes: int = 15
     input_dir: Path = Path("output/data")
     processed_dir: Path = Path("output/processed")
     lake_dir: Path = Path("output/lake")
@@ -63,6 +64,13 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.density_window_minutes, int)
+            or isinstance(self.density_window_minutes, bool)
+            or not 1 <= self.density_window_minutes <= 1440
+            or 1440 % self.density_window_minutes != 0
+        ):
+            raise ValueError("GEORISK_DENSITY_WINDOW_MINUTES must be 1..1440 and divide 1440")
         if self.coverage_mode not in ("center", "overlap"):
             raise ValueError("GEORISK_H3_COVERAGE_MODE must be center or overlap")
         if not isinstance(self.strict_validation, bool):
@@ -94,6 +102,7 @@ class GeoRiskConfig:
             telemetry_points=_integer(source, "GEORISK_TELEMETRY_POINTS", 3),
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),
             coverage_mode=source.get("GEORISK_H3_COVERAGE_MODE", "overlap"),
+            density_window_minutes=_integer(source, "GEORISK_DENSITY_WINDOW_MINUTES", 15),
             input_dir=Path(source.get("GEORISK_INPUT_DIR", "output/data")),
             processed_dir=Path(source.get("GEORISK_OUTPUT_DIR", "output/processed")),
             lake_dir=Path(source.get("GEORISK_LAKE_DIR", "output/lake")),

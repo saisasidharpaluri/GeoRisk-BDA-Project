@@ -13,6 +13,7 @@ def test_config_loads_and_validates_environment_values(tmp_path):
             "GEORISK_VESSEL_COUNT": "4",
             "GEORISK_TELEMETRY_POINTS": "2",
             "GEORISK_RESOLUTION": "7",
+            "GEORISK_DENSITY_WINDOW_MINUTES": "5",
             "GEORISK_INPUT_DIR": str(tmp_path / "data"),
             "GEORISK_OUTPUT_DIR": str(tmp_path / "processed"),
             "GEORISK_LAKE_DIR": str(tmp_path / "lake"),
@@ -23,6 +24,7 @@ def test_config_loads_and_validates_environment_values(tmp_path):
             "GEORISK_EVALUATION_FRACTION": "0.25",
         }
     )
+    assert config.density_window_minutes == 5
     assert config.seed == 11
     assert config.vessel_count == 4
     assert config.evaluation_fraction == 0.25
@@ -40,6 +42,7 @@ def test_config_rejects_invalid_values():
 
 def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     config = GeoRiskConfig(
+        density_window_minutes=5,
         seed=7,
         vessel_count=6,
         telemetry_points=3,
@@ -52,6 +55,9 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     report = run_end_to_end(config)
 
     assert report["config"]["coverage_mode"] == "overlap"
+    assert report["config"]["window_minutes"] == 5
+    density = [json.loads(line) for line in (config.processed_dir / "density-metrics.jsonl").read_text().splitlines()]
+    assert len({row["window_start"] for row in density}) == 3
     assert report["status"] == "success"
     assert report["generation"]["generated"] == 20
     assert report["processing"]["risk_event_count"] == 18
@@ -89,3 +95,8 @@ def test_aws_foundation_template_is_safe_and_complete(project_root):
     assert bucket["PublicAccessBlockConfiguration"]["BlockPublicPolicy"] is True
     assert resources["TelemetryStream"]["Properties"]["ShardCount"] == 1
     assert resources["WeatherAlertStream"]["Properties"]["RetentionPeriodHours"] == 24
+
+
+def test_config_rejects_window_not_dividing_day():
+    with pytest.raises(ValueError, match="GEORISK_DENSITY_WINDOW_MINUTES"):
+        GeoRiskConfig.from_env({"GEORISK_DENSITY_WINDOW_MINUTES": "7"})

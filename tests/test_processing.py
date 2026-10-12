@@ -374,3 +374,34 @@ def test_unknown_coverage_mode_rejected():
         process_events([], [], coverage_mode="unknown")
     with pytest.raises(ValueError, match="GEORISK_H3_COVERAGE_MODE"):
         GeoRiskConfig.from_env({"GEORISK_H3_COVERAGE_MODE": "unknown"})
+
+
+def test_five_minute_windows():
+    result = process_events([
+        _telemetry("v1", 12, 78, 4), _telemetry("v2", 12, 78, 5),
+    ], [], window_minutes=5)
+    assert [(r["window_start"], r["window_end"]) for r in result["density_metrics"]] == [
+        (_timestamp(0), _timestamp(5)), (_timestamp(5), _timestamp(10)),
+    ]
+
+
+def test_sixty_minute_window_groups_hour():
+    result = process_events([
+        _telemetry("v1", 12, 78, 5), _telemetry("v2", 12, 78, 55),
+    ], [], window_minutes=60)
+    assert len(result["density_metrics"]) == 1
+    assert result["density_metrics"][0]["unique_vessel_count"] == 2
+    assert result["density_metrics"][0]["window_start"] == _timestamp(0)
+    assert result["density_metrics"][0]["window_end"] == _timestamp(60)
+
+
+@pytest.mark.parametrize("minutes", [0, 7, 1441, True, 1.5])
+def test_processing_rejects_invalid_window(minutes):
+    with pytest.raises(ValueError, match="window_minutes"):
+        process_events([], [], window_minutes=minutes)
+
+
+def test_multi_hour_window_uses_epoch_floor():
+    metric = process_events([_telemetry("v", 12, 78, 95)], [], window_minutes=120)["density_metrics"][0]
+    assert metric["window_start"] == _timestamp(0)
+    assert metric["window_end"] == _timestamp(120)

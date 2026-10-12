@@ -34,13 +34,9 @@ def _timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _window_start(value: datetime) -> datetime:
-    value = value.astimezone(UTC)
-    return value.replace(
-        minute=value.minute - value.minute % WINDOW_MINUTES,
-        second=0,
-        microsecond=0,
-    )
+def _window_start(value: datetime, minutes: int) -> datetime:
+    seconds = int(value.timestamp())
+    return datetime.fromtimestamp(seconds - seconds % (minutes * 60), tz=UTC)
 
 
 def _matching_hazards(
@@ -70,10 +66,16 @@ def process_events(
     resolution: int = DEFAULT_RESOLUTION,
     strict: bool = False,
     coverage_mode: str = DEFAULT_COVERAGE_MODE,
+    window_minutes: int = WINDOW_MINUTES,
 ) -> dict[str, Any]:
     """Create risk events and unique-vessel density metrics from one batch."""
     if not isinstance(strict, bool):
         raise TypeError("strict must be a boolean")
+    if (
+        not isinstance(window_minutes, int) or isinstance(window_minutes, bool)
+        or not 1 <= window_minutes <= 1440 or 1440 % window_minutes != 0
+    ):
+        raise ValueError("window_minutes must be 1..1440 and divide 1440")
     _validate_resolution(resolution)
     if coverage_mode not in COVERAGE_MODES:
         raise ValueError("coverage_mode must be center or overlap")
@@ -146,9 +148,9 @@ def process_events(
                 "matching_hazards": matches,
             }
         )
-        window_start = _window_start(event_time)
+        window_start = _window_start(event_time, window_minutes)
         density_keys.add(
-            (window_start, window_start + timedelta(minutes=WINDOW_MINUTES), cell, event["vessel_id"])
+            (window_start, window_start + timedelta(minutes=window_minutes), cell, event["vessel_id"])
         )
 
     density_vessels: defaultdict[tuple[datetime, datetime, str], set[str]] = defaultdict(set)
@@ -248,6 +250,7 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
     results = process_events(
         telemetry, alerts, resolution=resolution, strict=strict,
         coverage_mode=config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
+        window_minutes=config.get("window_minutes", WINDOW_MINUTES),
     )
     for entry in quarantine:
         key = "telemetry_in" if entry["contract"] == "vessel_telemetry" else "alerts_in"
