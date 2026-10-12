@@ -78,3 +78,7 @@ heading 0..<360 degrees are required. Static alerts retain geometry as JSON.
 its latest revisions. `match_risk()` broadcasts those cells and uses half-open
 validity intervals. Unmatched events have `matching_hazards=[]`; matched hazards
 are sorted by alert ID. Output types match the Arrow lake schema.
+
+`density()` counts distinct vessels in configurable UTC windows (15 minutes by
+default). Repeated positions never inflate the vessel count. Windows must divide
+1440 minutes, including larger 60- and 120-minute windows.

@@ -10,7 +10,7 @@ pytestmark = pytest.mark.spark
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.processing.h3_index import point_to_cell
 from georisk.processing.spark_transforms import (
-    assign_h3, hazard_cells_df, match_risk, read_alerts, read_telemetry, split_valid,
+    assign_h3, density, hazard_cells_df, match_risk, read_alerts, read_telemetry, split_valid,
 )
 from georisk.processing.stream_job import process_events
 
@@ -91,3 +91,23 @@ def test_spark_risk_empty_hazards_and_revisions(spark, tmp_path, scenario):
         rows = match_risk(indexed, hazard_cells_df(spark, alerts, 7, "overlap"), "overlap").collect()
         assert sorted((row.asDict(recursive=True) for row in rows), key=lambda row: row["event_id"]) == \
             sorted(process_events(telemetry, alerts)["risk_events"], key=lambda row: row["event_id"])
+
+
+@pytest.mark.parametrize("minutes", [5, 15, 60, 120])
+def test_spark_density_matches_process_events(spark, tmp_path, scenario, minutes):
+    telemetry = scenario["telemetry"]
+    valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry + telemetry[:1]))
+    rows = density(assign_h3(valid, 7), minutes).collect()
+    expected = process_events(telemetry, [], window_minutes=minutes)["density_metrics"]
+    key = lambda row: (row["window_start"], row["h3_index"])
+    assert sorted((row.asDict() for row in rows), key=key) == sorted(expected, key=key)
+
+
+def test_spark_density_window_boundary(spark, tmp_path, scenario):
+    telemetry = [dict(scenario["telemetry"][0], event_id=f"boundary-{i}", event_time=time)
+                 for i, time in enumerate(["2026-01-01T12:14:59Z", "2026-01-01T12:15:00Z"])]
+    valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry))
+    rows = density(assign_h3(valid, 7), 15).orderBy("window_start").collect()
+    assert [(row.window_start, row.unique_vessel_count) for row in rows] == [
+        ("2026-01-01T12:00:00Z", 1), ("2026-01-01T12:15:00Z", 1),
+    ]

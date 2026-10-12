@@ -154,3 +154,28 @@ def match_risk(
         F.col("h3_resolution").cast("int"),
         (F.size("matching_hazards") > 0).alias("risk_alert"), "matching_hazards",
     )
+
+
+def density_keys(telemetry_h3_df: DataFrame, window_minutes: int) -> DataFrame:
+    """Return distinct vessel/window/cell keys, reusable across microbatches."""
+    if (not isinstance(window_minutes, int) or isinstance(window_minutes, bool)
+            or not 1 <= window_minutes <= 1440 or 1440 % window_minutes != 0):
+        raise ValueError("window_minutes must be 1..1440 and divide 1440")
+    return telemetry_h3_df.withColumn(
+        "window", F.window("event_ts", f"{window_minutes} minutes"),
+    ).select(
+        F.date_format("window.start", "yyyy-MM-dd'T'HH:mm:ss'Z'").alias("window_start"),
+        F.date_format("window.end", "yyyy-MM-dd'T'HH:mm:ss'Z'").alias("window_end"),
+        "h3_index", "h3_resolution", "vessel_id",
+    ).distinct()
+
+
+def density(telemetry_h3_df: DataFrame, window_minutes: int) -> DataFrame:
+    """Count distinct vessels in epoch-aligned, half-open UTC windows."""
+    return density_keys(telemetry_h3_df, window_minutes).groupBy(
+        "window_start", "window_end", "h3_index", "h3_resolution",
+    ).agg(F.countDistinct("vessel_id").alias("unique_vessel_count")).select(
+        F.lit(1).cast("int").alias("schema_version"), "window_start", "window_end",
+        "h3_index", F.col("h3_resolution").cast("int"),
+        F.col("unique_vessel_count").cast("long"),
+    )
