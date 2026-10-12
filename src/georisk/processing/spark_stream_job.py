@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from georisk.processing.spark_transforms import (
     TELEMETRY_SCHEMA, assign_h3, density_keys, hazard_cells_df, match_risk, read_alerts,
     split_valid, with_event_ts,
 )
-from georisk.processing.stream_job import _quarantine_entry
+from georisk.processing.stream_job import _parse_utc, _quarantine_entry, _timestamp
 
 
 def _alerts(spark: SparkSession, directory: Path) -> tuple[list[dict], list[dict]]:
@@ -94,14 +95,17 @@ def run_stream(
     coverage_mode: str = "overlap",
     window_minutes: int = 15,
     available_now: bool = True,
+    allowed_lateness_minutes: int | None = None,
 ) -> StreamingQuery:
     """Start a local JSONL stream; callers await or stop the returned query.
 
     Use one writer and one persistent checkpoint per output root. Completed
     accepted-batch snapshots make retries after a partial sink write safe.
     """
+    lateness = (GeoRiskConfig.from_env().allowed_lateness_minutes
+                if allowed_lateness_minutes is None else allowed_lateness_minutes)
     GeoRiskConfig(resolution=resolution, coverage_mode=coverage_mode,
-                  density_window_minutes=window_minutes)
+                  density_window_minutes=window_minutes, allowed_lateness_minutes=lateness)
     if not isinstance(available_now, bool):
         raise TypeError("available_now must be a boolean")
     source, output, checkpoint = map(Path, (input_root, output_root, checkpoint_root))
@@ -110,6 +114,7 @@ def run_stream(
     alerts_dir.mkdir(parents=True, exist_ok=True)
     checkpoint.mkdir(parents=True, exist_ok=True)
     risk_root = output / "curated" / "risk_events"
+    watermark_path = checkpoint / "georisk-watermark.json"
 
     def process_batch(batch_df: DataFrame, batch_id: int) -> None:
         batch = batch_df.persist()
@@ -129,10 +134,20 @@ def run_stream(
                     "event_date", F.date_format("event_ts", "yyyy-MM-dd"),
                 )
                 new = _unwritten(distinct, risk_root)
+                previous = (json.loads(watermark_path.read_text(encoding="utf-8"))
+                            .get("max_event_time") if watermark_path.exists() else None)
+                if previous is not None:
+                    cutoff = _parse_utc(previous) - timedelta(minutes=lateness)
+                    new.filter(F.col("event_ts") < F.lit(cutoff)).withColumn(
+                        "reason", F.lit("late_event"),
+                    ).write.mode("overwrite").json(
+                        str(output / "quarantine" / "late" / f"batch-{batch_id}"),
+                    )
+                    new = new.filter(F.col("event_ts") >= F.lit(cutoff))
                 risk = match_risk(assign_h3(new, resolution),
                                   hazard_cells_df(spark, alerts, resolution, coverage_mode),
                                   coverage_mode).withColumn(
-                    "event_date", F.substring("event_time", 1, 10),
+                    "event_date", F.date_format(F.try_to_timestamp("event_time"), "yyyy-MM-dd"),
                 )
                 risk.write.mode("overwrite").parquet(str(snapshot))
             accepted = spark.read.parquet(str(snapshot)).persist()
@@ -141,6 +156,18 @@ def run_stream(
                 _unwritten(accepted, risk_root).write.mode("append").partitionBy(
                     "event_date",
                 ).parquet(str(risk_root))
+                maximum = accepted.select(F.date_format(
+                    F.max(F.try_to_timestamp("event_time")), "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
+                )).first()[0]
+                previous = (json.loads(watermark_path.read_text(encoding="utf-8"))
+                            .get("max_event_time") if watermark_path.exists() else None)
+                current = _parse_utc(maximum)
+                if previous is not None:
+                    current = max(current, _parse_utc(previous))
+                temporary = watermark_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps({"max_event_time": _timestamp(current)}) + "\n",
+                                     encoding="utf-8")
+                temporary.replace(watermark_path)
         finally:
             if accepted is not None:
                 accepted.unpersist()

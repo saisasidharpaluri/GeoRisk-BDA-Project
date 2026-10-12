@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -113,3 +114,63 @@ def test_stream_density_preserves_untouched_dates(spark, tmp_path, stream_data):
     assert {row["event_date"] for row in read_dataset(tmp_path / "output", "density_metrics")} == {
         "2026-01-01", "2026-01-02",
     }
+
+
+def test_stream_quarantines_late_events(spark, tmp_path, stream_data, monkeypatch):
+    monkeypatch.setenv("GEORISK_ALLOWED_LATENESS_MINUTES", "10")
+    event = stream_data["telemetry"][0]
+    recent = dict(event, event_id="recent", event_time="2026-01-01T12:30:00Z")
+    boundary = dict(event, event_id="boundary", event_time="2026-01-01T12:20:00Z")
+    late = dict(event, event_id="late", event_time="2026-01-01T12:19:59Z")
+    publish(tmp_path / "input", [recent])
+    run(spark, tmp_path)
+    publish(tmp_path / "input", [boundary, late])
+    run(spark, tmp_path)
+    rows = read_dataset(tmp_path / "output", "risk_events")
+    expected = process_events([recent, boundary, late], [])
+    assert {row["event_id"] for row in rows} == {row["event_id"] for row in expected["risk_events"]}
+    rejected = [json.loads(line) for path in (tmp_path / "output" / "quarantine" / "late").rglob("*.json")
+                for line in path.read_text().splitlines()]
+    assert [(row["event_id"], row["reason"]) for row in rejected] == [("late", "late_event")]
+    assert json.loads((tmp_path / "checkpoint" / "georisk-watermark.json").read_text()) == {
+        "max_event_time": recent["event_time"],
+    }
+
+
+def test_stream_invalid_and_duplicate_rows_do_not_advance_watermark(spark, tmp_path, stream_data):
+    event = stream_data["telemetry"][0]
+    publish(tmp_path / "input", [event])
+    run(spark, tmp_path)
+    publish(tmp_path / "input", [dict(event, event_time="2026-01-01T23:00:00Z"),
+                                  dict(event, event_id="invalid", latitude=100,
+                                       event_time="2026-01-02T12:00:00Z")])
+    run(spark, tmp_path)
+    assert json.loads((tmp_path / "checkpoint" / "georisk-watermark.json").read_text()) == {
+        "max_event_time": event["event_time"],
+    }
+
+
+def test_stream_recovers_after_sink_writes_before_checkpoint_commit(
+    spark, tmp_path, stream_data, monkeypatch,
+):
+    from pyspark.errors import StreamingQueryException
+
+    telemetry = stream_data["telemetry"][:3]
+    publish(tmp_path / "input", telemetry)
+    replace = Path.replace
+
+    def fail_watermark_once(path, target):
+        if Path(target).name == "georisk-watermark.json":
+            raise OSError("simulated failure after sink writes")
+        return replace(path, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", fail_watermark_once)
+        with pytest.raises(StreamingQueryException, match="simulated failure"):
+            run(spark, tmp_path)
+    assert len(read_dataset(tmp_path / "output", "risk_events")) == len(telemetry)
+    run(spark, tmp_path)
+    assert len(read_dataset(tmp_path / "output", "risk_events")) == len(telemetry)
+    key = lambda row: (row["window_start"], row["h3_index"])
+    assert sorted(without_date(read_dataset(tmp_path / "output", "density_metrics")), key=key) == \
+        sorted(process_events(telemetry, [])["density_metrics"], key=key)

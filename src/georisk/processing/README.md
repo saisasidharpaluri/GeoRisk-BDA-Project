@@ -127,3 +127,16 @@ Distinct vessel/window/cell keys accumulate in `state/density_keys/`. Each batch
 recomputes only affected dates, replacing those density partitions with dynamic
 partition overwrite. Retries may repeat keys but count-distinct keeps the
 published metrics unchanged. No unsupported streaming count-distinct is used.
+
+The persisted `georisk-watermark.json` records `max_event_time`. New unique valid
+events strictly older than the previous batch maximum minus
+GEORISK_ALLOWED_LATENESS_MINUTES (default 10) go to quarantine as `late_event`.
+The boundary is accepted. Invalid and duplicate events do not advance the
+watermark. The file is atomically replaced only after the sinks succeed.
+Spark applies this policy between unordered microbatches; the local processor
+advances time for each record in arrival order, so mixed out-of-order records
+inside one Spark batch can differ from a local run.
+
+Snapshots and density keys are retained for recovery and exact recomputation;
+this local demonstration has no automatic retention cleanup or concurrent-writer
+transaction protocol. Stop a failed query and restart with the same checkpoint.
