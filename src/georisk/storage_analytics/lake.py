@@ -14,6 +14,9 @@ import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
 from georisk.contracts import validate_event
+from georisk.storage_analytics.arrow_schemas import (
+    ARROW_SCHEMAS, from_arrow_rows, to_arrow_rows,
+)
 
 CONTRACT_BY_DATASET = {
     "vessel_telemetry": "vessel_telemetry",
@@ -79,7 +82,7 @@ def write_dataset(
     materialized = [dict(record) for record in records]
     name = _dataset_name(materialized, dataset_name)
     _validate_records(materialized, name)
-    table = pa.Table.from_pylist(materialized)
+    table = pa.Table.from_pylist(to_arrow_rows(name, materialized), schema=ARROW_SCHEMAS[name])
     parsed = urlparse(s3_uri)
 
     if parsed.scheme == "s3":
@@ -118,8 +121,13 @@ def read_dataset(root: str | Path, dataset_name: str) -> list[dict[str, Any]]:
     path = Path(root) / dataset_name
     if not path.exists():
         return []
-    table = ds.dataset(path, format="parquet", partitioning="hive").to_table()
-    return table.to_pylist()
+    table = ds.dataset(
+        path,
+        format="parquet",
+        schema=ARROW_SCHEMAS[dataset_name].append(pa.field("event_date", pa.string())),
+        partitioning=ds.partitioning(pa.schema([("event_date", pa.string())]), flavor="hive"),
+    ).to_table()
+    return from_arrow_rows(dataset_name, table.to_pylist())
 
 
 def risk_summary(root: str | Path) -> dict[str, int]:

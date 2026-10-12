@@ -25,3 +25,5 @@ columns can be mapped to Spark MLlib for AWS Glue execution.
 ## Handoff
 
 Consume Member 2's risk and density schemas. Provide Member 4 with stable Athena queries or result files and the field names they can render.
+
+Parquet uses explicit nullable schemas; weather geometry is stored as JSON and restored on read. Delete any old `output/lake/` before re-running; files written before this change have inferred schemas.

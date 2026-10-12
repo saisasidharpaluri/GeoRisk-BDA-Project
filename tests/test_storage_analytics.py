@@ -2,6 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from georisk.contracts import load_schema
+from georisk.ingestion.generator import generate_events
+from georisk.storage_analytics.arrow_schemas import ARROW_SCHEMAS
+from georisk.storage_analytics.lake import CONTRACT_BY_DATASET
+
 from georisk.storage_analytics.delay_model import (
     FEATURES,
     make_synthetic_label,
@@ -110,3 +115,36 @@ def test_delay_model_rejects_missing_features():
     del row["density"]
     with pytest.raises(ValueError, match="density"):
         train_and_evaluate([_delay_row(1)], [row])
+
+
+def test_mixed_polygon_and_multipolygon_alerts_round_trip(tmp_path):
+    alerts = generate_events(7, 0)["weather_alerts"]
+    alerts[1]["geometry"] = {
+        "type": "MultiPolygon", "coordinates": [alerts[1]["geometry"]["coordinates"]],
+    }
+    write_dataset(alerts, tmp_path, "2026-01-01")
+    rows = read_dataset(tmp_path, "weather_alerts")
+    assert [row["geometry"] for row in rows] == [alert["geometry"] for alert in alerts]
+    assert all("geometry_json" not in row for row in rows)
+
+
+def test_empty_and_alerted_risk_partitions_read_together(tmp_path):
+    write_dataset([_risk(0, False)], tmp_path, "2026-01-02")
+    write_dataset([_risk(1)], tmp_path, "2026-01-03")
+    rows = read_dataset(tmp_path, "risk_events")
+    assert len(rows) == 2
+    assert {row["event_date"] for row in rows} == {"2026-01-02", "2026-01-03"}
+    assert rows[0]["matching_hazards"] == []
+    assert rows[1]["matching_hazards"][0]["alert_id"] == "alert-1"
+    assert risk_summary(tmp_path) == {
+        "risk_event_count": 2, "alerted_event_count": 1,
+        "vessel_count": 2, "exposed_vessel_count": 1,
+    }
+
+
+@pytest.mark.parametrize("dataset,contract", CONTRACT_BY_DATASET.items())
+def test_arrow_schemas_match_contract_properties(dataset, contract):
+    expected = {"geometry_json" if key == "geometry" else key
+                for key in load_schema(contract)["properties"]}
+    assert set(ARROW_SCHEMAS[dataset].names) == expected
+    assert all(field.nullable for field in ARROW_SCHEMAS[dataset])
