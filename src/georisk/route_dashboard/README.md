@@ -33,3 +33,10 @@ Route comparisons report all edges above the risk threshold, identify those on t
 includes `distance_nm` and travel hours at 14 knots. An eligible fastest baseline
 is retained; when it is blocked, the alternative minimizes travel hours plus
 the configured risk penalty among eligible edges.
+
+`edge_risk.score_graph()` scores a deep copy using the H3 grid path between each
+edge's coordinates. At the requested time it combines maximum active hazard
+severity (70%) and maximum density in the containing window (30%, saturated at
+5 vessels). Empty data scores zero. Each edge includes `risk_detail` with the
+severity, contributing alert IDs, and density. Hazard revisions use the latest
+version available at that time; validity and density windows exclude their end.
