@@ -46,6 +46,8 @@ class GeoRiskConfig:
     scenario_duration_minutes: int = 120
     telemetry_interval_seconds: int = 300
     stream_dir: Path = Path("output/stream")
+    spark_output_dir: Path = Path("output/spark")
+    spark_checkpoint_dir: Path = Path("output/spark/checkpoints")
     replay_speed_factor: float = 0.0
     resolution: int = 7
     coverage_mode: str = "overlap"
@@ -74,6 +76,12 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        for name, value in (
+            ("GEORISK_SPARK_OUTPUT_DIR", self.spark_output_dir),
+            ("GEORISK_SPARK_CHECKPOINT_DIR", self.spark_checkpoint_dir),
+        ):
+            if not isinstance(value, Path):
+                raise ValueError(f"{name} must be a Path")
         if (not isinstance(self.delay_noise_std_hours, (int, float))
                 or isinstance(self.delay_noise_std_hours, bool)
                 or not math.isfinite(self.delay_noise_std_hours)
@@ -140,6 +148,8 @@ class GeoRiskConfig:
             scenario_duration_minutes=_integer(source, "GEORISK_SCENARIO_DURATION_MINUTES", 120),
             telemetry_interval_seconds=_integer(source, "GEORISK_TELEMETRY_INTERVAL_SECONDS", 300),
             stream_dir=Path(source.get("GEORISK_STREAM_DIR", "output/stream")),
+            spark_output_dir=Path(source.get("GEORISK_SPARK_OUTPUT_DIR", "output/spark")),
+            spark_checkpoint_dir=Path(source.get("GEORISK_SPARK_CHECKPOINT_DIR", "output/spark/checkpoints")),
             replay_speed_factor=_float(source, "GEORISK_REPLAY_SPEED_FACTOR", 0.0),
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),
             coverage_mode=source.get("GEORISK_H3_COVERAGE_MODE", "overlap"),

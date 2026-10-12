@@ -82,3 +82,43 @@ are sorted by alert ID. Output types match the Arrow lake schema.
 `density()` counts distinct vessels in configurable UTC windows (15 minutes by
 default). Repeated positions never inflate the vessel count. Windows must divide
 1440 minutes, including larger 60- and 120-minute windows.
+
+## Spark file streaming
+
+In the WSL Spark environment described in the project README:
+
+```python
+from georisk.config import GeoRiskConfig
+from georisk.spark_session import get_spark
+from georisk.processing.spark_stream_job import run_stream
+
+settings = GeoRiskConfig.from_env()
+spark = get_spark()
+query = run_stream(
+    spark, settings.stream_dir, settings.spark_output_dir, settings.spark_checkpoint_dir,
+    resolution=settings.resolution, coverage_mode=settings.coverage_mode,
+    window_minutes=settings.density_window_minutes,
+    allowed_lateness_minutes=settings.allowed_lateness_minutes,
+)
+query.awaitTermination()
+spark.stop()
+```
+
+Publish inputs with `FileStreamPublisher`: `vessel-telemetry/*.jsonl` and
+`weather-alerts/*.jsonl`. The query processes all available files then exits;
+pass `available_now=False` to keep watching. `run_stream()` returns the query
+immediately; its caller owns waiting/stopping and the Spark session lifecycle.
+
+GEORISK_SPARK_OUTPUT_DIR defaults to `output/spark` and
+GEORISK_SPARK_CHECKPOINT_DIR to `output/spark/checkpoints`. Risk and density use
+the existing `curated/<dataset>/event_date=YYYY-MM-DD/` lake layout and can be
+read with `lake.read_dataset()`. Invalid telemetry and alert revisions go under
+`quarantine/` with a reason. Alerts are reloaded at each new telemetry batch;
+alert-only arrivals do not rewrite historical risk outputs.
+
+Risk processing deduplicates event IDs within each batch and against affected
+date partitions already in the lake. Event IDs must retain their original event
+date. Checkpoints under `risk/` remember consumed files. Accepted batches are
+snapshotted under `georisk-batches/` before sink writes so retries use the same
+accepted records and hazard results. Keep the checkpoint with its output and
+use one writer per output root. Do not modify consumed input files in place.
