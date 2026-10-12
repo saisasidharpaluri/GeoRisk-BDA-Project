@@ -23,9 +23,9 @@ def test_foundation_template_has_required_controls(project_root):
 def test_foundation_template_rejects_public_bucket_configuration(project_root):
     template = load_template(_template_path(project_root))
     unsafe = copy.deepcopy(template)
-    unsafe["Resources"]["DataBucket"]["Properties"][
-        "PublicAccessBlockConfiguration"
-    ]["BlockPublicPolicy"] = False
+    unsafe["Resources"]["DataBucket"]["Properties"]["PublicAccessBlockConfiguration"][
+        "BlockPublicPolicy"
+    ] = False
     result = validate_foundation_template(unsafe)
     assert result["passed"] is False
     assert any(

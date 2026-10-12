@@ -15,7 +15,9 @@ import pyarrow.parquet as pq
 
 from georisk.contracts import validate_event
 from georisk.storage_analytics.arrow_schemas import (
-    ARROW_SCHEMAS, from_arrow_rows, to_arrow_rows,
+    ARROW_SCHEMAS,
+    from_arrow_rows,
+    to_arrow_rows,
 )
 
 CONTRACT_BY_DATASET = {
@@ -108,12 +110,12 @@ def write_dataset(
             import boto3
         except ImportError as exc:
             raise RuntimeError("boto3 is required for s3:// destinations") from exc
-        key = f"{parsed.path.strip('/')}/{ZONE_BY_DATASET[name]}/{name}/event_date={event_date}/part-{batch_id}.parquet".lstrip("/")
+        key = f"{parsed.path.strip('/')}/{ZONE_BY_DATASET[name]}/{name}/event_date={event_date}/part-{batch_id}.parquet".lstrip(
+            "/"
+        )
         buffer = io.BytesIO()
         pq.write_table(table, buffer, compression="snappy")
-        boto3.client("s3").put_object(
-            Bucket=parsed.netloc, Key=key, Body=buffer.getvalue()
-        )
+        boto3.client("s3").put_object(Bucket=parsed.netloc, Key=key, Body=buffer.getvalue())
         return f"s3://{parsed.netloc}/{key}"
 
     is_windows_path = (
@@ -184,9 +186,7 @@ def risk_summary(root: str | Path) -> dict[str, int]:
         "risk_event_count": len(records),
         "alerted_event_count": sum(bool(row["risk_alert"]) for row in records),
         "vessel_count": len({row["vessel_id"] for row in records}),
-        "exposed_vessel_count": len(
-            {row["vessel_id"] for row in records if row["risk_alert"]}
-        ),
+        "exposed_vessel_count": len({row["vessel_id"] for row in records if row["risk_alert"]}),
     }
 
 

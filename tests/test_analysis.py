@@ -18,16 +18,26 @@ def test_comparison_returns_one_row_per_resolution(monkeypatch):
     assert [row["runtime_seconds"] for row in rows] == [0.5, 0.75]
     for row in rows:
         assert set(row) == {
-            "resolution", "avg_cell_area_km2", "hazard_cell_count", "alerted_event_count",
-            "exposed_vessel_count", "density_cell_count", "max_unique_vessels", "runtime_seconds",
+            "resolution",
+            "avg_cell_area_km2",
+            "hazard_cell_count",
+            "alerted_event_count",
+            "exposed_vessel_count",
+            "density_cell_count",
+            "max_unique_vessels",
+            "runtime_seconds",
         }
-        result = process_events(events["telemetry"], events["weather_alerts"], resolution=row["resolution"])
+        result = process_events(
+            events["telemetry"], events["weather_alerts"], resolution=row["resolution"]
+        )
         alerted = [e for e in result["risk_events"] if e["risk_alert"]]
         assert row["avg_cell_area_km2"] == h3.average_hexagon_area(row["resolution"], "km^2")
         assert row["alerted_event_count"] == len(alerted)
         assert row["exposed_vessel_count"] == len({e["vessel_id"] for e in alerted})
         assert row["density_cell_count"] == len({e["h3_index"] for e in result["density_metrics"]})
-        assert row["max_unique_vessels"] == max(e["unique_vessel_count"] for e in result["density_metrics"])
+        assert row["max_unique_vessels"] == max(
+            e["unique_vessel_count"] for e in result["density_metrics"]
+        )
 
 
 def test_res8_has_more_hazard_cells_than_res7():
@@ -42,13 +52,17 @@ def test_comparison_hazard_count_uses_unique_latest_valid_coverage():
     revision = dict(alert, event_id="revision", event_time="2026-01-01T12:00:00Z")
     other = dict(alert, event_id="other", alert_id="other")
     invalid = dict(revision, event_time="2026-01-01T12:01:00Z", severity=6)
-    row = compare_resolutions([], [alert, revision, other, invalid], resolutions=(7,), coverage_mode="center")[0]
+    row = compare_resolutions(
+        [], [alert, revision, other, invalid], resolutions=(7,), coverage_mode="center"
+    )[0]
     assert row["hazard_cell_count"] == len(polygon_to_cells(alert["geometry"], 7, "center"))
     assert row["alerted_event_count"] == row["exposed_vessel_count"] == 0
     assert row["density_cell_count"] == row["max_unique_vessels"] == 0
 
 
-def test_comparison_cli_uses_configured_generator_and_report_directory(tmp_path, monkeypatch, capsys):
+def test_comparison_cli_uses_configured_generator_and_report_directory(
+    tmp_path, monkeypatch, capsys
+):
     monkeypatch.setenv("GEORISK_REPORT_PATH", str(tmp_path / "reports" / "run.json"))
     monkeypatch.setenv("GEORISK_SEED", "11")
     monkeypatch.setenv("GEORISK_VESSEL_COUNT", "4")
@@ -59,7 +73,9 @@ def test_comparison_cli_uses_configured_generator_and_report_directory(tmp_path,
     rows = json.loads((tmp_path / "reports" / "resolution-comparison.json").read_text())
     assert json.loads(capsys.readouterr().out) == rows
     events = generate_events(11, 4, telemetry_points=2)
-    expected = compare_resolutions(events["telemetry"], events["weather_alerts"], coverage_mode="center")
+    expected = compare_resolutions(
+        events["telemetry"], events["weather_alerts"], coverage_mode="center"
+    )
     assert [{k: v for k, v in row.items() if k != "runtime_seconds"} for row in rows] == [
         {k: v for k, v in row.items() if k != "runtime_seconds"} for row in expected
     ]

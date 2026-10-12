@@ -9,8 +9,13 @@ from datetime import timedelta
 from georisk.contracts import SCHEMA_VERSION, validate_event
 from georisk.geo_demo import DEMO_NODES
 from georisk.ingestion.generator import (
-    DEFAULT_START_TIME, MAX_TELEMETRY_POINTS, MAX_VESSELS, Event,
-    _polygon, _utc_timestamp, _vessel_track,
+    DEFAULT_START_TIME,
+    MAX_TELEMETRY_POINTS,
+    MAX_VESSELS,
+    Event,
+    _polygon,
+    _utc_timestamp,
+    _vessel_track,
 )
 
 
@@ -52,7 +57,13 @@ class ScenarioConfig:
     hazards: tuple[HazardSpec, ...] = DEFAULT_HAZARDS
 
     def __post_init__(self) -> None:
-        for name in ("seed", "vessel_count", "duration_minutes", "interval_seconds", "congestion_vessels"):
+        for name in (
+            "seed",
+            "vessel_count",
+            "duration_minutes",
+            "interval_seconds",
+            "congestion_vessels",
+        ):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool):
                 raise TypeError(f"{name} must be an integer")
@@ -64,7 +75,9 @@ class ScenarioConfig:
             raise ValueError("duration_minutes and interval_seconds must be positive")
         if not 1 <= self.duration_minutes * 60 // self.interval_seconds <= MAX_TELEMETRY_POINTS:
             raise ValueError(f"scenario must contain 1..{MAX_TELEMETRY_POINTS} telemetry steps")
-        if not isinstance(self.hazards, tuple) or not all(isinstance(h, HazardSpec) for h in self.hazards):
+        if not isinstance(self.hazards, tuple) or not all(
+            isinstance(h, HazardSpec) for h in self.hazards
+        ):
             raise TypeError("hazards must be a tuple of HazardSpec values")
         if len({hazard.alert_id for hazard in self.hazards}) != len(self.hazards):
             raise ValueError("hazard alert_ids must be unique")
@@ -80,19 +93,31 @@ def generate_scenario(config: ScenarioConfig) -> dict[str, list[Event]]:
         if congested:
             lat, lon = DEMO_NODES["chokepoint"]
             position = (lat + rng.uniform(-0.008, 0.008), lon + rng.uniform(-0.008, 0.008))
-        telemetry.extend(_vessel_track(
-            rng, index, config.duration_minutes * 60 // config.interval_seconds,
-            config.interval_seconds, DEFAULT_START_TIME,
-            position=position, speed_knots=6.0 if congested else None,
-        ))
+        telemetry.extend(
+            _vessel_track(
+                rng,
+                index,
+                config.duration_minutes * 60 // config.interval_seconds,
+                config.interval_seconds,
+                DEFAULT_START_TIME,
+                position=position,
+                speed_knots=6.0 if congested else None,
+            )
+        )
     alerts = []
     for hazard in config.hazards:
         valid_from = _utc_timestamp(DEFAULT_START_TIME + timedelta(minutes=hazard.appear_minute))
         alert = {
-            "schema_version": SCHEMA_VERSION, "event_id": f"alert-event-{hazard.alert_id}",
-            "alert_id": hazard.alert_id, "event_time": valid_from, "valid_from": valid_from,
-            "valid_until": _utc_timestamp(DEFAULT_START_TIME + timedelta(minutes=hazard.expire_minute)),
-            "hazard_type": hazard.hazard_type, "severity": hazard.severity,
+            "schema_version": SCHEMA_VERSION,
+            "event_id": f"alert-event-{hazard.alert_id}",
+            "alert_id": hazard.alert_id,
+            "event_time": valid_from,
+            "valid_from": valid_from,
+            "valid_until": _utc_timestamp(
+                DEFAULT_START_TIME + timedelta(minutes=hazard.expire_minute)
+            ),
+            "hazard_type": hazard.hazard_type,
+            "severity": hazard.severity,
             "geometry": _polygon(hazard.center_lat, hazard.center_lon, hazard.half_size_deg),
         }
         validate_event("weather_alert", alert)

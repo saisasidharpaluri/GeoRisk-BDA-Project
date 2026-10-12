@@ -71,7 +71,9 @@ def _validate_rows(records: list[Mapping[str, Any]], *, require_label: bool = Tr
             raise ValueError("features and labels must be finite numbers")
 
 
-def _solve_ridge(matrix: list[list[float]], labels: list[float], penalty: float = 1e-8) -> list[float]:
+def _solve_ridge(
+    matrix: list[list[float]], labels: list[float], penalty: float = 1e-8
+) -> list[float]:
     size = len(matrix[0])
     normal = [[0.0] * size for _ in range(size)]
     vector = [0.0] * size
@@ -95,15 +97,14 @@ def _solve_ridge(matrix: list[list[float]], labels: list[float], penalty: float 
             if row == pivot:
                 continue
             factor = normal[row][pivot]
-            normal[row] = [
-                left - factor * right for left, right in zip(normal[row], normal[pivot])
-            ]
+            normal[row] = [left - factor * right for left, right in zip(normal[row], normal[pivot])]
             vector[row] -= factor * vector[pivot]
     return vector
 
 
 def predict(
-    coefficients: Iterable[float], rows: Iterable[Mapping[str, Any]],
+    coefficients: Iterable[float],
+    rows: Iterable[Mapping[str, Any]],
 ) -> list[float]:
     """Predict from an intercept followed by FEATURES coefficients; labels are optional."""
     weights = [float(value) for value in coefficients]
@@ -127,7 +128,8 @@ def _metrics(actual: list[float], predicted: list[float]) -> dict[str, float]:
 
 
 def train_and_evaluate(
-    training_data: Iterable[Mapping[str, Any]], evaluation_data: Iterable[Mapping[str, Any]],
+    training_data: Iterable[Mapping[str, Any]],
+    evaluation_data: Iterable[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Fit a regression model and compare it with a training-mean baseline."""
     training = [dict(row) for row in training_data]

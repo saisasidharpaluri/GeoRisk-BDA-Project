@@ -22,9 +22,7 @@ def test_artifact_manifest_is_stable_and_detects_content(tmp_path):
     second.write_text("beta", encoding="utf-8")
 
     manifest = artifact_manifest([second, first])
-    assert [entry["path"] for entry in manifest] == sorted(
-        [str(first), str(second)]
-    )
+    assert [entry["path"] for entry in manifest] == sorted([str(first), str(second)])
     assert manifest[0]["sha256"] == sha256_file(manifest[0]["path"])
     first.write_text("changed", encoding="utf-8")
     assert artifact_manifest([first])[0]["sha256"] != manifest[0]["sha256"]
@@ -60,13 +58,20 @@ def test_phase7_pipeline_report_is_accepted(tmp_path):
     report = run_end_to_end(config)
     assert report["acceptance"]["status"] == "accepted"
     assert report["lake"]["risk_summary"]["alerted_event_count"] > 0
-    density = [json.loads(line) for line in (config.processed_dir / "density-metrics.jsonl").read_text().splitlines()]
+    density = [
+        json.loads(line)
+        for line in (config.processed_dir / "density-metrics.jsonl").read_text().splitlines()
+    ]
     assert len({row["window_start"] for row in density}) > 1
     assert report["route"]["route_changed"] is True
     assert report["route"]["baseline_blocked_edges"]
     assert len(report["artifacts"]) == 11
     assert set(report["lake"]["paths"]) == {
-        "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates",
+        "vessel_telemetry",
+        "weather_alerts",
+        "risk_events",
+        "density_metrics",
+        "delay_estimates",
     }
     parquet_paths = [path for paths in report["lake"]["paths"].values() for path in paths]
     assert set(parquet_paths) == {str(path) for path in config.lake_dir.rglob("*.parquet")}
@@ -76,12 +81,25 @@ def test_phase7_pipeline_report_is_accepted(tmp_path):
     assert validated["passed"] is True
 
 
-@pytest.mark.parametrize("missing_dataset", [
-    "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates",
-])
+@pytest.mark.parametrize(
+    "missing_dataset",
+    [
+        "vessel_telemetry",
+        "weather_alerts",
+        "risk_events",
+        "density_metrics",
+        "delay_estimates",
+    ],
+)
 def test_parquet_acceptance_checks_every_partition(tmp_path, missing_dataset):
     paths = {}
-    for dataset in ["vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates"]:
+    for dataset in [
+        "vessel_telemetry",
+        "weather_alerts",
+        "risk_events",
+        "density_metrics",
+        "delay_estimates",
+    ]:
         paths[dataset] = []
         for index in range(2):
             path = tmp_path / f"{dataset}-{index}.parquet"
@@ -90,7 +108,9 @@ def test_parquet_acceptance_checks_every_partition(tmp_path, missing_dataset):
 
     def parquet_passed() -> bool:
         result = acceptance_checks({"lake": {"paths": paths}})
-        return next(check["passed"] for check in result["checks"] if check["name"] == "parquet_outputs")
+        return next(
+            check["passed"] for check in result["checks"] if check["name"] == "parquet_outputs"
+        )
 
     assert parquet_passed() is True
     Path(paths[missing_dataset][1]).unlink()
@@ -131,8 +151,10 @@ def test_validate_report_detects_modified_parquet(tmp_path, monkeypatch):
     from georisk.operations import validate_cli
 
     config = GeoRiskConfig(
-        input_dir=tmp_path / "data", processed_dir=tmp_path / "processed",
-        lake_dir=tmp_path / "lake", dashboard_dir=tmp_path,
+        input_dir=tmp_path / "data",
+        processed_dir=tmp_path / "processed",
+        lake_dir=tmp_path / "lake",
+        dashboard_dir=tmp_path,
         report_path=tmp_path / "report.json",
     )
     report = run_end_to_end(config)

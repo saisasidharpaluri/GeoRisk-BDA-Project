@@ -87,9 +87,7 @@ def _shortest_path(
     risk_threshold: float | None,
     risk_penalty: float,
 ) -> RouteResult:
-    queue: list[tuple[float, tuple[str, ...], float, float]] = [
-        (0.0, (origin,), 0.0, 0.0)
-    ]
+    queue: list[tuple[float, tuple[str, ...], float, float]] = [(0.0, (origin,), 0.0, 0.0)]
     best: dict[str, float] = {origin: 0.0}
     while queue:
         cost, path, travel, risk = heapq.heappop(queue)
@@ -143,11 +141,13 @@ def find_alternative_route(
     baseline = _shortest_path(graph, origin, destination, None, 0.0)
     blocked = sorted(
         (source, edge["to"])
-        for source, edges in graph.items() for edge in edges
+        for source, edges in graph.items()
+        for edge in edges
         if float(edge["risk"]) > risk_threshold
     )
     baseline_blocked = [
-        (source, target) for source, target in zip(baseline.path, baseline.path[1:])
+        (source, target)
+        for source, target in zip(baseline.path, baseline.path[1:])
         if (source, target) in blocked
     ]
     if baseline_blocked:
@@ -166,15 +166,19 @@ def find_alternative_route(
         unavailable = ", ".join(
             f"{source}→{target} ({float(edge['risk']):.2f})"
             for source, target in baseline_blocked
-            for edge in graph[source] if edge["to"] == target
-            and float(edge["risk"]) > risk_threshold
+            for edge in graph[source]
+            if edge["to"] == target and float(edge["risk"]) > risk_threshold
         )
         if not unavailable:
-            unavailable = ", ".join(
-                f"{source}→{edge['to']} ({float(edge['risk']):.2f})"
-                for source, edges in sorted(graph.items()) for edge in edges
-                if float(edge["risk"]) > risk_threshold
-            ) or "none"
+            unavailable = (
+                ", ".join(
+                    f"{source}→{edge['to']} ({float(edge['risk']):.2f})"
+                    for source, edges in sorted(graph.items())
+                    for edge in edges
+                    if float(edge["risk"]) > risk_threshold
+                )
+                or "none"
+            )
         explanation = (
             f"Edges above risk threshold {risk_threshold:.2f} were unavailable: {unavailable}. "
             f"Alternative adds {travel_delta:+.1f} h and changes total risk by {risk_delta:+.2f}."

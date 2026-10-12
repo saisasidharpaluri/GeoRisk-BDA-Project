@@ -16,12 +16,16 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         fields = dict(getattr(record, "georisk", {}))
-        fields.update({
-            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat().replace("+00:00", "Z"),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        })
+        fields.update(
+            {
+                "ts": datetime.fromtimestamp(record.created, timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+            }
+        )
         if record.exc_info:
             fields["exception"] = self.formatException(record.exc_info)
         return json.dumps(fields, sort_keys=True, default=str)

@@ -3,31 +3,70 @@ from datetime import datetime, timezone
 import pytest
 
 from georisk.route_dashboard.views import (
-    ROUTE_SCENARIOS, active_alerts, exposure_series, compare_adjacent_windows, daily_history, delay_mae,
-    density_for_window, density_windows, filter_risk_events, freshness, lane_status,
-    latest_delay_estimates, latest_positions, risk_table_rows, route_scenario_alerts,
+    ROUTE_SCENARIOS,
+    active_alerts,
+    exposure_series,
+    compare_adjacent_windows,
+    daily_history,
+    delay_mae,
+    density_for_window,
+    density_windows,
+    filter_risk_events,
+    freshness,
+    lane_status,
+    latest_delay_estimates,
+    latest_positions,
+    risk_table_rows,
+    route_scenario_alerts,
     severity_distribution,
 )
 
 
-def _alert(alert_id="H1", *, event_time="2026-01-01T12:00:00Z", valid_from="2026-01-01T12:00:00Z",
-           valid_until="2026-01-01T13:00:00Z", severity=3, hazard_type="storm"):
-    return {"alert_id": alert_id, "event_time": event_time, "valid_from": valid_from,
-            "valid_until": valid_until, "severity": severity, "hazard_type": hazard_type,
-            "geometry": {"type": "Polygon", "coordinates": [[[81, 13], [81.1, 13], [81.1, 13.1],
-                                                             [81, 13]]]}}
+def _alert(
+    alert_id="H1",
+    *,
+    event_time="2026-01-01T12:00:00Z",
+    valid_from="2026-01-01T12:00:00Z",
+    valid_until="2026-01-01T13:00:00Z",
+    severity=3,
+    hazard_type="storm",
+):
+    return {
+        "alert_id": alert_id,
+        "event_time": event_time,
+        "valid_from": valid_from,
+        "valid_until": valid_until,
+        "severity": severity,
+        "hazard_type": hazard_type,
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[81, 13], [81.1, 13], [81.1, 13.1], [81, 13]]],
+        },
+    }
 
 
 def _risk(vessel="v1", time="2026-01-01T12:00:00Z", hazards=(), cell="c1"):
-    return {"vessel_id": vessel, "event_time": time, "h3_index": cell,
-            "risk_alert": bool(hazards), "coverage_mode": "overlap", "h3_resolution": 7,
-            "matching_hazards": [{"alert_id": f"H{severity}", "hazard_type": kind,
-                                  "severity": severity} for kind, severity in hazards]}
+    return {
+        "vessel_id": vessel,
+        "event_time": time,
+        "h3_index": cell,
+        "risk_alert": bool(hazards),
+        "coverage_mode": "overlap",
+        "h3_resolution": 7,
+        "matching_hazards": [
+            {"alert_id": f"H{severity}", "hazard_type": kind, "severity": severity}
+            for kind, severity in hazards
+        ],
+    }
 
 
 def _density(cell, start, count):
-    return {"h3_index": cell, "window_start": f"2026-01-01T{start}:00Z",
-            "window_end": "unused", "unique_vessel_count": count}
+    return {
+        "h3_index": cell,
+        "window_start": f"2026-01-01T{start}:00Z",
+        "window_end": "unused",
+        "unique_vessel_count": count,
+    }
 
 
 def test_active_alerts_half_open_and_latest_revision():
@@ -44,8 +83,12 @@ def test_active_alerts_half_open_and_latest_revision():
 
 
 def test_severity_distribution_uses_max_matched_severity():
-    events = [_risk(hazards=[("storm", 2), ("high_waves", 4)]), _risk(hazards=[("storm", 4)]),
-              _risk(hazards=[("storm", 1)]), _risk()]
+    events = [
+        _risk(hazards=[("storm", 2), ("high_waves", 4)]),
+        _risk(hazards=[("storm", 4)]),
+        _risk(hazards=[("storm", 1)]),
+        _risk(),
+    ]
     assert severity_distribution(events) == {1: 1, 4: 2}
     assert severity_distribution([]) == {}
 
@@ -59,8 +102,12 @@ def test_filter_risk_events_by_type_severity_and_time():
     assert [e["vessel_id"] for e in filter_risk_events(events)] == ["a", "b", "c"]
     assert [e["vessel_id"] for e in filter_risk_events(events, hazard_types=["storm"])] == ["a"]
     assert [e["vessel_id"] for e in filter_risk_events(events, min_severity=2)] == ["a", "b"]
-    assert [e["vessel_id"] for e in filter_risk_events(
-        events, start="2026-01-01T12:10:00Z", end="2026-01-01T12:20:00Z")] == ["b", "c"]
+    assert [
+        e["vessel_id"]
+        for e in filter_risk_events(
+            events, start="2026-01-01T12:10:00Z", end="2026-01-01T12:20:00Z"
+        )
+    ] == ["b", "c"]
     assert filter_risk_events([], min_severity=1) == []
 
 
@@ -77,8 +124,13 @@ def test_density_for_window_sorted_by_count():
 
 
 def test_compare_adjacent_windows():
-    rows = [_density("a", "12:00", 1), _density("a", "12:15", 3), _density("b", "12:15", 1),
-            _density("b", "12:30", 2), _density("c", "12:30", 5)]
+    rows = [
+        _density("a", "12:00", 1),
+        _density("a", "12:15", 3),
+        _density("b", "12:15", 1),
+        _density("b", "12:30", 2),
+        _density("c", "12:30", 5),
+    ]
     middle = compare_adjacent_windows(rows, "2026-01-01T12:15:00Z")
     assert middle == [
         {"h3_index": "a", "previous": 1, "current": 3, "next": 0},
@@ -99,7 +151,9 @@ def test_latest_positions_last_row_per_vessel():
         {"vessel_id": "a", "event_time": "2026-01-01T12:10:00Z", "latitude": 4},
     ]
     assert [(r["vessel_id"], r["latitude"]) for r in latest_positions(telemetry)] == [
-        ("a", 4), ("b", 1)]
+        ("a", 4),
+        ("b", 1),
+    ]
     assert latest_positions([]) == []
 
 
@@ -107,8 +161,13 @@ def test_freshness_states():
     now = datetime(2026, 1, 1, 13, 0, tzinfo=timezone.utc)
     metadata = {"processed_at": "2026-01-01T12:50:00Z", "latest_event_time": "x", "watermark": "y"}
     fresh = freshness(metadata, now, 30)
-    assert fresh == {"processed_at": "2026-01-01T12:50:00Z", "latest_event_time": "x",
-                     "watermark": "y", "age_minutes": 10.0, "state": "fresh"}
+    assert fresh == {
+        "processed_at": "2026-01-01T12:50:00Z",
+        "latest_event_time": "x",
+        "watermark": "y",
+        "age_minutes": 10.0,
+        "state": "fresh",
+    }
     assert freshness(metadata, now, 5)["state"] == "stale"
     assert freshness(None, now, 30)["state"] == "unavailable"
     assert freshness({}, now, 30)["age_minutes"] is None
@@ -125,15 +184,22 @@ def test_risk_table_rows_flatten_hazards():
 
 
 def _estimate(vessel, time, split, predicted, label, baseline=1.0):
-    return {"vessel_id": vessel, "event_time": time, "split": split,
-            "predicted_delay_hours": predicted, "baseline_delay_hours": baseline,
-            "synthetic_label_hours": label}
+    return {
+        "vessel_id": vessel,
+        "event_time": time,
+        "split": split,
+        "predicted_delay_hours": predicted,
+        "baseline_delay_hours": baseline,
+        "synthetic_label_hours": label,
+    }
 
 
 def test_delay_helpers_latest_and_mae():
-    estimates = [_estimate("a", "2026-01-01T12:00:00Z", "train", 1.0, 1.0),
-                 _estimate("a", "2026-01-01T12:05:00Z", "evaluation", 2.0, 2.5),
-                 _estimate("b", "2026-01-01T12:05:00Z", "evaluation", 0.5, 0.0)]
+    estimates = [
+        _estimate("a", "2026-01-01T12:00:00Z", "train", 1.0, 1.0),
+        _estimate("a", "2026-01-01T12:05:00Z", "evaluation", 2.0, 2.5),
+        _estimate("b", "2026-01-01T12:05:00Z", "evaluation", 0.5, 0.0),
+    ]
     latest = latest_delay_estimates(estimates)
     assert [(r["vessel_id"], r["error_hours"]) for r in latest] == [("a", -0.5), ("b", 0.5)]
     mae = delay_mae(estimates)
@@ -159,13 +225,21 @@ def test_route_scenarios_build_alert_lists():
 def test_close_inner_lane_forces_detour():
     from georisk.route_dashboard.edge_risk import score_graph
     from georisk.route_dashboard.route_optimizer import (
-        demonstration_graph, demonstration_nodes, find_alternative_route,
+        demonstration_graph,
+        demonstration_nodes,
+        find_alternative_route,
     )
 
     at = "2026-01-01T12:00:00Z"
-    graph = score_graph(demonstration_graph(), demonstration_nodes(),
-                        route_scenario_alerts("Close inner lane", [], at), [],
-                        at_time=at, resolution=7, coverage_mode="overlap")
+    graph = score_graph(
+        demonstration_graph(),
+        demonstration_nodes(),
+        route_scenario_alerts("Close inner lane", [], at),
+        [],
+        at_time=at,
+        resolution=7,
+        coverage_mode="overlap",
+    )
     route = find_alternative_route(graph, "port_a", "port_b", 0.5)
     assert route["route_changed"] is True
     status = {row["lane"]: row for row in lane_status(graph, route)}
@@ -177,10 +251,12 @@ def test_close_inner_lane_forces_detour():
 
 
 def test_exposure_series_counts_distinct_vessels_per_time():
-    events = [_risk("a", "2026-01-01T12:05:00Z", [("storm", 3)]),
-              _risk("a", "2026-01-01T12:05:00Z", [("storm", 3)]),
-              _risk("b", "2026-01-01T12:00:00Z"),
-              _risk("b", "2026-01-01T12:05:00Z", [("storm", 3)])]
+    events = [
+        _risk("a", "2026-01-01T12:05:00Z", [("storm", 3)]),
+        _risk("a", "2026-01-01T12:05:00Z", [("storm", 3)]),
+        _risk("b", "2026-01-01T12:00:00Z"),
+        _risk("b", "2026-01-01T12:05:00Z", [("storm", 3)]),
+    ]
     assert exposure_series(events) == [
         {"event_time": "2026-01-01T12:00:00Z", "exposed_vessels": 0},
         {"event_time": "2026-01-01T12:05:00Z", "exposed_vessels": 2},
@@ -192,30 +268,69 @@ def test_daily_history_groups_by_event_date(tmp_path):
     from georisk.storage_analytics.lake import write_partitioned
 
     def risk(event_id, vessel, time, alert):
-        return {"schema_version": 1, "event_id": event_id, "vessel_id": vessel,
-                "event_time": time, "latitude": 13.1, "longitude": 81.2,
-                "h3_index": "876181091ffffff", "h3_resolution": 7, "coverage_mode": "overlap",
-                "risk_alert": alert, "matching_hazards": [{
-                    "alert_id": "H1", "hazard_type": "storm", "severity": 4,
-                    "valid_from": "2026-01-01T00:00:00Z", "valid_until": "2026-01-03T00:00:00Z",
-                }] if alert else []}
+        return {
+            "schema_version": 1,
+            "event_id": event_id,
+            "vessel_id": vessel,
+            "event_time": time,
+            "latitude": 13.1,
+            "longitude": 81.2,
+            "h3_index": "876181091ffffff",
+            "h3_resolution": 7,
+            "coverage_mode": "overlap",
+            "risk_alert": alert,
+            "matching_hazards": [
+                {
+                    "alert_id": "H1",
+                    "hazard_type": "storm",
+                    "severity": 4,
+                    "valid_from": "2026-01-01T00:00:00Z",
+                    "valid_until": "2026-01-03T00:00:00Z",
+                }
+            ]
+            if alert
+            else [],
+        }
 
-    write_partitioned([
-        risk("e1", "v1", "2026-01-01T12:00:00Z", True),
-        risk("e2", "v2", "2026-01-01T12:05:00Z", False),
-        risk("e3", "v1", "2026-01-02T08:00:00Z", True),
-        risk("e4", "v2", "2026-01-02T08:00:00Z", True),
-    ], tmp_path, dataset_name="risk_events")
-    write_partitioned([
-        {"schema_version": 1, "h3_index": "876181091ffffff", "h3_resolution": 7,
-         "window_start": "2026-01-02T08:00:00Z", "window_end": "2026-01-02T08:15:00Z",
-         "unique_vessel_count": 2},
-    ], tmp_path, dataset_name="density_metrics")
+    write_partitioned(
+        [
+            risk("e1", "v1", "2026-01-01T12:00:00Z", True),
+            risk("e2", "v2", "2026-01-01T12:05:00Z", False),
+            risk("e3", "v1", "2026-01-02T08:00:00Z", True),
+            risk("e4", "v2", "2026-01-02T08:00:00Z", True),
+        ],
+        tmp_path,
+        dataset_name="risk_events",
+    )
+    write_partitioned(
+        [
+            {
+                "schema_version": 1,
+                "h3_index": "876181091ffffff",
+                "h3_resolution": 7,
+                "window_start": "2026-01-02T08:00:00Z",
+                "window_end": "2026-01-02T08:15:00Z",
+                "unique_vessel_count": 2,
+            },
+        ],
+        tmp_path,
+        dataset_name="density_metrics",
+    )
     assert daily_history(tmp_path) == [
-        {"event_date": "2026-01-01", "risk_events": 2, "alerted_events": 1,
-         "exposed_vessels": 1, "max_density": 0},
-        {"event_date": "2026-01-02", "risk_events": 2, "alerted_events": 2,
-         "exposed_vessels": 2, "max_density": 2},
+        {
+            "event_date": "2026-01-01",
+            "risk_events": 2,
+            "alerted_events": 1,
+            "exposed_vessels": 1,
+            "max_density": 0,
+        },
+        {
+            "event_date": "2026-01-02",
+            "risk_events": 2,
+            "alerted_events": 2,
+            "exposed_vessels": 2,
+            "max_density": 2,
+        },
     ]
     assert daily_history(tmp_path / "empty") == []
 

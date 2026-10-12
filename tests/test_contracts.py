@@ -40,9 +40,7 @@ def _alert() -> dict:
         "severity": 4,
         "geometry": {
             "type": "Polygon",
-            "coordinates": [
-                [[78.0, 12.0], [79.0, 12.0], [79.0, 13.0], [78.0, 12.0]]
-            ],
+            "coordinates": [[[78.0, 12.0], [79.0, 12.0], [79.0, 13.0], [78.0, 12.0]]],
         },
     }
 
@@ -116,8 +114,13 @@ def test_unknown_fields_are_rejected():
 
 
 def test_risk_event_accepts_new_optional_fields():
-    event = dict(_risk_event(), event_id="telemetry-1", latitude=12.5,
-                 longitude=78.25, coverage_mode="center")
+    event = dict(
+        _risk_event(),
+        event_id="telemetry-1",
+        latitude=12.5,
+        longitude=78.25,
+        coverage_mode="center",
+    )
     validate_event("risk_event", event)
     event["coverage_mode"] = "overlap"
     validate_event("risk_event", event)
@@ -135,12 +138,17 @@ def test_matching_hazard_requires_alert_id():
         validate_event("risk_event", event)
 
 
-@pytest.mark.parametrize("hazard", [
-    {"alert_id": "a"}, {"alert_id": "", "severity": 4},
-    {"alert_id": "a", "severity": 0}, {"alert_id": "a", "severity": 6},
-    {"alert_id": "a", "severity": 4, "unknown": 1},
-    {"alert_id": "a", "severity": 4, "valid_from": "bad"},
-])
+@pytest.mark.parametrize(
+    "hazard",
+    [
+        {"alert_id": "a"},
+        {"alert_id": "", "severity": 4},
+        {"alert_id": "a", "severity": 0},
+        {"alert_id": "a", "severity": 6},
+        {"alert_id": "a", "severity": 4, "unknown": 1},
+        {"alert_id": "a", "severity": 4, "valid_from": "bad"},
+    ],
+)
 def test_matching_hazard_fields_are_validated(hazard):
     with pytest.raises(ContractValidationError):
         validate_event("risk_event", dict(_risk_event(), matching_hazards=[hazard]))
@@ -152,7 +160,10 @@ def test_alert_rejects_out_of_range_coordinates(position, multipolygon):
     event = _alert()
     event["geometry"]["coordinates"][0][1] = position
     if multipolygon:
-        event["geometry"] = {"type": "MultiPolygon", "coordinates": [event["geometry"]["coordinates"]]}
+        event["geometry"] = {
+            "type": "MultiPolygon",
+            "coordinates": [event["geometry"]["coordinates"]],
+        }
     with pytest.raises(ContractValidationError, match="geometry"):
         validate_event("weather_alert", event)
 
@@ -164,7 +175,10 @@ def test_alert_rejects_unclosed_ring(multipolygon):
     event["geometry"]["coordinates"].append(ring)
     path = "geometry.coordinates[1]"
     if multipolygon:
-        event["geometry"] = {"type": "MultiPolygon", "coordinates": [event["geometry"]["coordinates"]]}
+        event["geometry"] = {
+            "type": "MultiPolygon",
+            "coordinates": [event["geometry"]["coordinates"]],
+        }
         path = "geometry.coordinates[0][1]"
     with pytest.raises(ContractValidationError) as error:
         validate_event("weather_alert", event)

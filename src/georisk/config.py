@@ -95,9 +95,7 @@ class GeoRiskConfig:
     aws_project_bucket_name: str = ""
     aws_glue_role_arn: str = ""
     deployment_plan_path: Path = Path("output/reports/phase8-deployment-plan.json")
-    foundation_template_path: Path = Path(
-        "infra/aws/georisk-foundation.template.json"
-    )
+    foundation_template_path: Path = Path("infra/aws/georisk-foundation.template.json")
 
     def __post_init__(self) -> None:
         if self.delay_model not in ("linear", "gbt"):
@@ -109,10 +107,12 @@ class GeoRiskConfig:
         ):
             if not isinstance(value, Path):
                 raise ValueError(f"{name} must be a Path")
-        if (not isinstance(self.delay_noise_std_hours, (int, float))
-                or isinstance(self.delay_noise_std_hours, bool)
-                or not math.isfinite(self.delay_noise_std_hours)
-                or self.delay_noise_std_hours < 0):
+        if (
+            not isinstance(self.delay_noise_std_hours, (int, float))
+            or isinstance(self.delay_noise_std_hours, bool)
+            or not math.isfinite(self.delay_noise_std_hours)
+            or self.delay_noise_std_hours < 0
+        ):
             raise ValueError("GEORISK_DELAY_NOISE_STD_HOURS must be a non-negative finite number")
         for name, value in (
             ("GEORISK_SCENARIO_DURATION_MINUTES", self.scenario_duration_minutes),
@@ -124,9 +124,12 @@ class GeoRiskConfig:
             raise ValueError("scenario duration and interval must produce 1..1000 telemetry steps")
         if not isinstance(self.stream_dir, Path):
             raise ValueError("GEORISK_STREAM_DIR must be a Path")
-        if (not isinstance(self.replay_speed_factor, (int, float))
-                or isinstance(self.replay_speed_factor, bool)
-                or not math.isfinite(self.replay_speed_factor) or self.replay_speed_factor < 0):
+        if (
+            not isinstance(self.replay_speed_factor, (int, float))
+            or isinstance(self.replay_speed_factor, bool)
+            or not math.isfinite(self.replay_speed_factor)
+            or self.replay_speed_factor < 0
+        ):
             raise ValueError("GEORISK_REPLAY_SPEED_FACTOR must be a non-negative finite number")
         if self.log_level not in LOG_LEVELS:
             raise ValueError(f"GEORISK_LOG_LEVEL must be one of {LOG_LEVELS}")
@@ -153,8 +156,11 @@ class GeoRiskConfig:
             raise ValueError("GEORISK_RESOLUTION must be between 0 and 15")
         if not 0 <= self.route_risk_threshold <= 1:
             raise ValueError("GEORISK_ROUTE_RISK_THRESHOLD must be between 0 and 1")
-        if (not isinstance(self.stale_after_minutes, int) or isinstance(self.stale_after_minutes, bool)
-                or not 1 <= self.stale_after_minutes <= 10080):
+        if (
+            not isinstance(self.stale_after_minutes, int)
+            or isinstance(self.stale_after_minutes, bool)
+            or not 1 <= self.stale_after_minutes <= 10080
+        ):
             raise ValueError("GEORISK_STALE_AFTER_MINUTES must be an integer from 1 to 10080")
         if self.route_risk_penalty < 0:
             raise ValueError("GEORISK_ROUTE_RISK_PENALTY cannot be negative")
@@ -180,7 +186,9 @@ class GeoRiskConfig:
             telemetry_interval_seconds=_integer(source, "GEORISK_TELEMETRY_INTERVAL_SECONDS", 300),
             stream_dir=Path(source.get("GEORISK_STREAM_DIR", "output/stream")),
             spark_output_dir=Path(source.get("GEORISK_SPARK_OUTPUT_DIR", "output/spark")),
-            spark_checkpoint_dir=Path(source.get("GEORISK_SPARK_CHECKPOINT_DIR", "output/spark/checkpoints")),
+            spark_checkpoint_dir=Path(
+                source.get("GEORISK_SPARK_CHECKPOINT_DIR", "output/spark/checkpoints")
+            ),
             replay_speed_factor=_float(source, "GEORISK_REPLAY_SPEED_FACTOR", 0.0),
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),
             coverage_mode=source.get("GEORISK_H3_COVERAGE_MODE", "overlap"),
@@ -190,9 +198,7 @@ class GeoRiskConfig:
             processed_dir=Path(source.get("GEORISK_OUTPUT_DIR", "output/processed")),
             lake_dir=Path(source.get("GEORISK_LAKE_DIR", "output/lake")),
             dashboard_dir=Path(source.get("GEORISK_DASHBOARD_DATA_DIR", "output")),
-            report_path=Path(
-                source.get("GEORISK_REPORT_PATH", "output/reports/phase6-run.json")
-            ),
+            report_path=Path(source.get("GEORISK_REPORT_PATH", "output/reports/phase6-run.json")),
             route_risk_threshold=_float(source, "GEORISK_ROUTE_RISK_THRESHOLD", 0.5),
             route_risk_penalty=_float(source, "GEORISK_ROUTE_RISK_PENALTY", 4.0),
             stale_after_minutes=_integer(source, "GEORISK_STALE_AFTER_MINUTES", 30),

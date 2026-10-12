@@ -48,7 +48,7 @@ def test_env_file_loaded_without_overriding_shell(tmp_path, monkeypatch):
 
 def test_env_file_ignores_comments_and_quotes(tmp_path, monkeypatch):
     path = tmp_path / ".env"
-    path.write_text('\n # comment\n A = "hello world"\nB=\'x=y#literal\'\nC=\n', encoding="utf-8")
+    path.write_text("\n # comment\n A = \"hello world\"\nB='x=y#literal'\nC=\n", encoding="utf-8")
     monkeypatch.setattr(os, "environ", {})
     assert load_env_file(path) == {"A": "hello world", "B": "x=y#literal", "C": ""}
 
@@ -68,10 +68,13 @@ def test_legacy_clis_load_selected_env_file(tmp_path, monkeypatch, capsys):
 
     path = tmp_path / "demo.env"
     report_path = tmp_path / "report.json"
-    values = {"GEORISK_INPUT_DIR": str(tmp_path / "inputs"),
-              "GEORISK_OUTPUT_DIR": str(tmp_path / "processed"),
-              "GEORISK_LAKE_DIR": str(tmp_path / "lake"),
-              "GEORISK_REPORT_PATH": str(report_path), "GEORISK_SEED": "19"}
+    values = {
+        "GEORISK_INPUT_DIR": str(tmp_path / "inputs"),
+        "GEORISK_OUTPUT_DIR": str(tmp_path / "processed"),
+        "GEORISK_LAKE_DIR": str(tmp_path / "lake"),
+        "GEORISK_REPORT_PATH": str(report_path),
+        "GEORISK_SEED": "19",
+    }
     path.write_text("\n".join(f"{key}={value}" for key, value in values.items()))
     monkeypatch.setattr(os, "environ", {"GEORISK_ENV_FILE": str(path)})
     run_cli()
@@ -108,11 +111,18 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
 
     assert report["config"]["coverage_mode"] == "overlap"
     assert report["config"]["window_minutes"] == 5
-    density = [json.loads(line) for line in (config.processed_dir / "density-metrics.jsonl").read_text().splitlines()]
+    density = [
+        json.loads(line)
+        for line in (config.processed_dir / "density-metrics.jsonl").read_text().splitlines()
+    ]
     steps = config.scenario_duration_minutes * 60 // config.telemetry_interval_seconds
     expected_count = config.vessel_count * steps
-    expected_windows = len({step * config.telemetry_interval_seconds // (config.density_window_minutes * 60)
-                            for step in range(steps)})
+    expected_windows = len(
+        {
+            step * config.telemetry_interval_seconds // (config.density_window_minutes * 60)
+            for step in range(steps)
+        }
+    )
     assert len({row["window_start"] for row in density}) == expected_windows
     assert report["status"] == "success"
     assert report["generation"]["generated"] == expected_count + 2
@@ -154,9 +164,20 @@ def test_aws_foundation_template_is_safe_and_complete(project_root):
     path = project_root / "infra" / "aws" / "georisk-foundation.template.json"
     template = json.loads(path.read_text(encoding="utf-8"))
     resources = template["Resources"]
-    assert {"DataBucket", "TelemetryStream", "WeatherAlertStream", "GlueDatabase", "AthenaWorkGroup"} <= set(resources)
+    assert {
+        "DataBucket",
+        "TelemetryStream",
+        "WeatherAlertStream",
+        "GlueDatabase",
+        "AthenaWorkGroup",
+    } <= set(resources)
     bucket = resources["DataBucket"]["Properties"]
-    assert bucket["BucketEncryption"]["ServerSideEncryptionConfiguration"][0]["ServerSideEncryptionByDefault"]["SSEAlgorithm"] == "AES256"
+    assert (
+        bucket["BucketEncryption"]["ServerSideEncryptionConfiguration"][0][
+            "ServerSideEncryptionByDefault"
+        ]["SSEAlgorithm"]
+        == "AES256"
+    )
     assert bucket["PublicAccessBlockConfiguration"]["BlockPublicPolicy"] is True
     assert resources["TelemetryStream"]["Properties"]["ShardCount"] == 1
     assert resources["WeatherAlertStream"]["Properties"]["RetentionPeriodHours"] == 24
@@ -167,7 +188,9 @@ def test_config_rejects_window_not_dividing_day():
         GeoRiskConfig.from_env({"GEORISK_DENSITY_WINDOW_MINUTES": "7"})
 
 
-@pytest.mark.parametrize("name", ["GEORISK_SCENARIO_DURATION_MINUTES", "GEORISK_TELEMETRY_INTERVAL_SECONDS"])
+@pytest.mark.parametrize(
+    "name", ["GEORISK_SCENARIO_DURATION_MINUTES", "GEORISK_TELEMETRY_INTERVAL_SECONDS"]
+)
 @pytest.mark.parametrize("value", ["0", "-1", "1.5"])
 def test_config_rejects_invalid_scenario_settings(name, value):
     with pytest.raises(ValueError, match=name):
@@ -176,14 +199,20 @@ def test_config_rejects_invalid_scenario_settings(name, value):
 
 def test_pipeline_keeps_inner_route_after_hazards_expire(tmp_path):
     config = GeoRiskConfig(
-        vessel_count=6, scenario_duration_minutes=180,
-        input_dir=tmp_path / "data", processed_dir=tmp_path / "processed",
-        lake_dir=tmp_path / "lake", dashboard_dir=tmp_path,
+        vessel_count=6,
+        scenario_duration_minutes=180,
+        input_dir=tmp_path / "data",
+        processed_dir=tmp_path / "processed",
+        lake_dir=tmp_path / "lake",
+        dashboard_dir=tmp_path,
         report_path=tmp_path / "report.json",
     )
     report = run_end_to_end(config)
     assert report["route"]["at_time"] == "2026-01-01T14:55:00Z"
     assert report["route"]["route_changed"] is False
     assert report["route"]["baseline_blocked_edges"] == []
-    assert all(edge["risk_detail"]["alert_ids"] == []
-               for edges in report["route"]["edge_scores"].values() for edge in edges)
+    assert all(
+        edge["risk_detail"]["alert_ids"] == []
+        for edges in report["route"]["edge_scores"].values()
+        for edge in edges
+    )

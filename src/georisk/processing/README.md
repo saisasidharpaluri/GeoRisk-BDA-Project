@@ -102,8 +102,12 @@ from georisk.processing.spark_stream_job import run_stream
 settings = GeoRiskConfig.from_env()
 spark = get_spark()
 query = run_stream(
-    spark, settings.stream_dir, settings.spark_output_dir, settings.spark_checkpoint_dir,
-    resolution=settings.resolution, coverage_mode=settings.coverage_mode,
+    spark,
+    settings.stream_dir,
+    settings.spark_output_dir,
+    settings.spark_checkpoint_dir,
+    resolution=settings.resolution,
+    coverage_mode=settings.coverage_mode,
     window_minutes=settings.density_window_minutes,
     allowed_lateness_minutes=settings.allowed_lateness_minutes,
 )

@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 duckdb = pytest.importorskip(
-    "duckdb", reason="DuckDB is unavailable or its DLL is blocked by App Control",
+    "duckdb",
+    reason="DuckDB is unavailable or its DLL is blocked by App Control",
     exc_type=ImportError,
 )
 
@@ -40,20 +41,28 @@ def _density(window_start: str, window_end: str, cell: str, count: int) -> dict[
 def sql_lake(tmp_path):
     """Expose actual date-partitioned Parquet files through the SQL table names."""
     lake = tmp_path / "lake"
-    write_partitioned([
-        _risk("2026-01-01T12:00:00Z", "vessel-a", True),
-        _risk("2026-01-01T12:15:00Z", "vessel-a", True),
-        _risk("2026-01-01T13:00:00Z", "vessel-b", False),
-        _risk("2026-01-02T00:00:00Z", "vessel-b", True),
-        _risk("2026-01-02T00:30:00Z", "vessel-c", False),
-        _risk("2026-01-31T23:59:00Z", "vessel-a", True),
-    ], lake, dataset_name="risk_events")
-    write_partitioned([
-        _density("2026-01-01T12:00:00Z", "2026-01-01T12:15:00Z", "87754e649ffffff", 2),
-        _density("2026-01-01T12:00:00Z", "2026-01-01T12:15:00Z", "87754e648ffffff", 4),
-        _density("2026-01-02T00:00:00Z", "2026-01-02T00:15:00Z", "87754e649ffffff", 7),
-        _density("2026-01-31T23:45:00Z", "2026-02-01T00:00:00Z", "87754e64bffffff", 7),
-    ], lake, dataset_name="density_metrics")
+    write_partitioned(
+        [
+            _risk("2026-01-01T12:00:00Z", "vessel-a", True),
+            _risk("2026-01-01T12:15:00Z", "vessel-a", True),
+            _risk("2026-01-01T13:00:00Z", "vessel-b", False),
+            _risk("2026-01-02T00:00:00Z", "vessel-b", True),
+            _risk("2026-01-02T00:30:00Z", "vessel-c", False),
+            _risk("2026-01-31T23:59:00Z", "vessel-a", True),
+        ],
+        lake,
+        dataset_name="risk_events",
+    )
+    write_partitioned(
+        [
+            _density("2026-01-01T12:00:00Z", "2026-01-01T12:15:00Z", "87754e649ffffff", 2),
+            _density("2026-01-01T12:00:00Z", "2026-01-01T12:15:00Z", "87754e648ffffff", 4),
+            _density("2026-01-02T00:00:00Z", "2026-01-02T00:15:00Z", "87754e649ffffff", 7),
+            _density("2026-01-31T23:45:00Z", "2026-02-01T00:00:00Z", "87754e64bffffff", 7),
+        ],
+        lake,
+        dataset_name="density_metrics",
+    )
     with duckdb.connect(":memory:") as connection:
         for dataset in ["risk_events", "density_metrics"]:
             pattern = (lake / "curated" / dataset / "*" / "*.parquet").as_posix().replace("'", "''")
@@ -79,29 +88,50 @@ def test_risk_summary_sql_matches_python_summary(sql_lake):
 def test_density_summary_sql_matches_python_summary(sql_lake):
     lake, connection = sql_lake
     expected = [
-        {key: row[key] for key in (
-            "window_start", "window_end", "h3_index", "h3_resolution", "unique_vessel_count",
-        )}
+        {
+            key: row[key]
+            for key in (
+                "window_start",
+                "window_end",
+                "h3_index",
+                "h3_resolution",
+                "unique_vessel_count",
+            )
+        }
         for row in density_summary(lake)
     ]
     assert _query(connection, "density_summary.sql") == expected
 
 
-@pytest.mark.parametrize("query", [
-    "risk_summary.sql", "density_summary.sql", "top_congested_cells.sql",
-    "exposure_by_vessel.sql", "hourly_alert_counts.sql",
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "risk_summary.sql",
+        "density_summary.sql",
+        "top_congested_cells.sql",
+        "exposure_by_vessel.sql",
+        "hourly_alert_counts.sql",
+    ],
+)
 def test_sql_filters_date_partitions(sql_lake, query):
     lake, connection = sql_lake
     expected = _query(connection, query)
-    write_partitioned([
-        _risk("2025-12-31T23:59:00Z", "outside-before", True),
-        _risk("2026-02-01T00:00:00Z", "outside-after", True),
-    ], lake, dataset_name="risk_events")
-    write_partitioned([
-        _density("2025-12-31T23:45:00Z", "2026-01-01T00:00:00Z", "87754e649ffffff", 999),
-        _density("2026-02-01T00:00:00Z", "2026-02-01T00:15:00Z", "87754e649ffffff", 999),
-    ], lake, dataset_name="density_metrics")
+    write_partitioned(
+        [
+            _risk("2025-12-31T23:59:00Z", "outside-before", True),
+            _risk("2026-02-01T00:00:00Z", "outside-after", True),
+        ],
+        lake,
+        dataset_name="risk_events",
+    )
+    write_partitioned(
+        [
+            _density("2025-12-31T23:45:00Z", "2026-01-01T00:00:00Z", "87754e649ffffff", 999),
+            _density("2026-02-01T00:00:00Z", "2026-02-01T00:15:00Z", "87754e649ffffff", 999),
+        ],
+        lake,
+        dataset_name="density_metrics",
+    )
     assert _query(connection, query) == expected
 
 
@@ -116,10 +146,17 @@ def test_top_congested_cells_sql(sql_lake):
 
 def test_top_congested_cells_sql_limits_to_twenty(sql_lake):
     lake, connection = sql_lake
-    write_partitioned([
-        _density("2026-01-03T00:00:00Z", "2026-01-03T00:15:00Z", f"cell-{index:02d}", 10 + index)
-        for index in range(25)
-    ], lake, dataset_name="density_metrics", batch_id="more-cells")
+    write_partitioned(
+        [
+            _density(
+                "2026-01-03T00:00:00Z", "2026-01-03T00:15:00Z", f"cell-{index:02d}", 10 + index
+            )
+            for index in range(25)
+        ],
+        lake,
+        dataset_name="density_metrics",
+        batch_id="more-cells",
+    )
     assert _query(connection, "top_congested_cells.sql") == [
         {"h3_index": f"cell-{index:02d}", "peak_unique_vessel_count": 10 + index}
         for index in range(24, 4, -1)
@@ -130,12 +167,14 @@ def test_exposure_by_vessel_sql(sql_lake):
     _, connection = sql_lake
     assert _query(connection, "exposure_by_vessel.sql") == [
         {
-            "vessel_id": "vessel-a", "alerted_event_count": 3,
+            "vessel_id": "vessel-a",
+            "alerted_event_count": 3,
             "first_alerted_event_time": "2026-01-01T12:00:00Z",
             "last_alerted_event_time": "2026-01-31T23:59:00Z",
         },
         {
-            "vessel_id": "vessel-b", "alerted_event_count": 1,
+            "vessel_id": "vessel-b",
+            "alerted_event_count": 1,
             "first_alerted_event_time": "2026-01-02T00:00:00Z",
             "last_alerted_event_time": "2026-01-02T00:00:00Z",
         },

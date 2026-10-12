@@ -18,7 +18,8 @@ def get_spark(app_name: str = "georisk", master: str = "local[2]") -> SparkSessi
             "See the README Spark setup instructions."
         ) from exc
     return (
-        SparkSession.builder.appName(app_name).master(master)
+        SparkSession.builder.appName(app_name)
+        .master(master)
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.sql.shuffle.partitions", "4")
         .config("spark.ui.enabled", "false")

@@ -13,10 +13,12 @@ def test_blocked_edges_reported_when_threshold_exceeded():
     result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
     assert result["baseline"]["blocked_edges"] == []
     assert result["alternative"]["blocked_edges"] == [
-        ["chokepoint", "port_b"], ["port_a", "chokepoint"],
+        ["chokepoint", "port_b"],
+        ["port_a", "chokepoint"],
     ]
     assert result["baseline_blocked_edges"] == [
-        ["port_a", "chokepoint"], ["chokepoint", "port_b"],
+        ["port_a", "chokepoint"],
+        ["chokepoint", "port_b"],
     ]
 
 
@@ -73,7 +75,9 @@ def test_route_rejects_invalid_graph_and_unreachable_alternative():
     with pytest.raises(ValueError, match="no eligible route"):
         find_alternative_route(graph, "a", "b", 0.5)
     with pytest.raises(ValueError, match="unknown node"):
-        find_alternative_route({"a": [{"to": "missing", "travel_hours": 1, "risk": 0.1}]}, "a", "a", 0.5)
+        find_alternative_route(
+            {"a": [{"to": "missing", "travel_hours": 1, "risk": 0.1}]}, "a", "a", 0.5
+        )
 
 
 def test_route_rejects_negative_edge_values():
@@ -128,14 +132,20 @@ def test_loader_uses_explicit_dirs(tmp_path):
     processed = tmp_path / "custom-results"
     inputs.mkdir()
     processed.mkdir()
-    for directory, name in [(inputs, "vessel-telemetry"), (inputs, "weather-alerts"),
-                             (processed, "risk-events"), (processed, "density-metrics")]:
+    for directory, name in [
+        (inputs, "vessel-telemetry"),
+        (inputs, "weather-alerts"),
+        (processed, "risk-events"),
+        (processed, "density-metrics"),
+    ]:
         (directory / f"{name}.jsonl").write_text(json.dumps({"source": name}) + "\n")
     loaded = load_dashboard_data(tmp_path / "unused", input_dir=inputs, processed_dir=processed)
-    assert loaded == {"telemetry": [{"source": "vessel-telemetry"}],
-                      "weather_alerts": [{"source": "weather-alerts"}],
-                      "risk_events": [{"source": "risk-events"}],
-                      "density_metrics": [{"source": "density-metrics"}]}
+    assert loaded == {
+        "telemetry": [{"source": "vessel-telemetry"}],
+        "weather_alerts": [{"source": "weather-alerts"}],
+        "risk_events": [{"source": "risk-events"}],
+        "density_metrics": [{"source": "density-metrics"}],
+    }
     assert load_dashboard_data(tmp_path, input_dir=inputs)["telemetry"] == loaded["telemetry"]
 
 
@@ -145,14 +155,25 @@ def test_dashboard_and_report_share_configured_route(tmp_path, penalty):
     from georisk.pipeline import run_end_to_end
     from georisk.route_dashboard.dashboard import dashboard_route
 
-    config = GeoRiskConfig(input_dir=tmp_path / "inputs", processed_dir=tmp_path / "results",
-                           lake_dir=tmp_path / "lake", dashboard_dir=tmp_path / "unused",
-                           report_path=tmp_path / "report.json", route_risk_penalty=penalty)
+    config = GeoRiskConfig(
+        input_dir=tmp_path / "inputs",
+        processed_dir=tmp_path / "results",
+        lake_dir=tmp_path / "lake",
+        dashboard_dir=tmp_path / "unused",
+        report_path=tmp_path / "report.json",
+        route_risk_penalty=penalty,
+    )
     report = run_end_to_end(config)
     assert report["acceptance"]["passed"]
     data = load_dashboard_data(input_dir=config.input_dir, processed_dir=config.processed_dir)
-    route = dashboard_route(data, resolution=config.resolution, coverage_mode=config.coverage_mode,
-                            risk_threshold=config.route_risk_threshold, risk_penalty=penalty)
+    route = dashboard_route(
+        data,
+        resolution=config.resolution,
+        coverage_mode=config.coverage_mode,
+        risk_threshold=config.route_risk_threshold,
+        risk_penalty=penalty,
+    )
     assert route == report["route"]
     assert route["alternative"]["total_cost"] == pytest.approx(
-        route["alternative"]["travel_hours"] + penalty * route["alternative"]["risk_score"])
+        route["alternative"]["travel_hours"] + penalty * route["alternative"]["risk_score"]
+    )

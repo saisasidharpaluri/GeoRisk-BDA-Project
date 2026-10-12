@@ -26,16 +26,32 @@ def test_help_lists_subcommands(capsys, monkeypatch):
         cli.main(["--help"])
     assert exc.value.code == 0
     output = capsys.readouterr().out
-    for command in ("generate", "replay", "process", "run", "validate", "compare-resolutions", "dashboard"):
+    for command in (
+        "generate",
+        "replay",
+        "process",
+        "run",
+        "validate",
+        "compare-resolutions",
+        "dashboard",
+    ):
         assert command in output
     assert "spark-stream" not in output
 
 
 def test_run_and_validate_exit_codes(tmp_path, capsys):
     report_path = tmp_path / "report.json"
-    args = ["run", "--input-dir", str(tmp_path / "inputs"),
-            "--processed-dir", str(tmp_path / "processed"), "--lake-dir", str(tmp_path / "lake"),
-            "--report-path", str(report_path)]
+    args = [
+        "run",
+        "--input-dir",
+        str(tmp_path / "inputs"),
+        "--processed-dir",
+        str(tmp_path / "processed"),
+        "--lake-dir",
+        str(tmp_path / "lake"),
+        "--report-path",
+        str(report_path),
+    ]
     assert cli.main(args) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["acceptance"]["passed"]
@@ -52,8 +68,22 @@ def test_run_and_validate_exit_codes(tmp_path, capsys):
 
 def test_generate_writes_files(tmp_path):
     destination = tmp_path / "fixtures"
-    assert cli.main(["generate", "--output-dir", str(destination), "--vessel-count", "3",
-                     "--duration-minutes", "15", "--interval-seconds", "300"]) == 0
+    assert (
+        cli.main(
+            [
+                "generate",
+                "--output-dir",
+                str(destination),
+                "--vessel-count",
+                "3",
+                "--duration-minutes",
+                "15",
+                "--interval-seconds",
+                "300",
+            ]
+        )
+        == 0
+    )
     telemetry = (destination / "vessel-telemetry.jsonl").read_text().splitlines()
     assert len(telemetry) == 9
     assert len((destination / "weather-alerts.jsonl").read_text().splitlines()) == 2
@@ -63,7 +93,15 @@ def test_flags_override_shell_and_env_file(tmp_path, monkeypatch, capsys):
     path = tmp_path / "custom.env"
     path.write_text("GEORISK_VESSEL_COUNT=2\nGEORISK_SCENARIO_DURATION_MINUTES=10\n")
     monkeypatch.setenv("GEORISK_VESSEL_COUNT", "invalid-but-overridden")
-    args = ["--env-file", str(path), "generate", "--vessel-count", "4", "--input-dir", str(tmp_path / "data")]
+    args = [
+        "--env-file",
+        str(path),
+        "generate",
+        "--vessel-count",
+        "4",
+        "--input-dir",
+        str(tmp_path / "data"),
+    ]
     assert cli.main(args) == 0
     assert json.loads(capsys.readouterr().out)["generated"] == 10
     assert os.environ["GEORISK_VESSEL_COUNT"] == "invalid-but-overridden"
@@ -78,11 +116,34 @@ def test_process_and_replay_use_configured_settings(tmp_path, monkeypatch, capsy
     inputs = tmp_path / "inputs"
     processed = tmp_path / "processed"
     stream = tmp_path / "stream"
-    assert cli.main(["generate", "--input-dir", str(inputs), "--vessels", "2", "--duration-minutes", "15"]) == 0
+    assert (
+        cli.main(
+            ["generate", "--input-dir", str(inputs), "--vessels", "2", "--duration-minutes", "15"]
+        )
+        == 0
+    )
     capsys.readouterr()
-    assert cli.main(["process", "--input-dir", str(inputs), "--output-dir", str(processed),
-                     "--resolution", "8", "--coverage-mode", "center", "--window-minutes", "5",
-                     "--allowed-lateness-minutes", "0", "--strict-validation"]) == 0
+    assert (
+        cli.main(
+            [
+                "process",
+                "--input-dir",
+                str(inputs),
+                "--output-dir",
+                str(processed),
+                "--resolution",
+                "8",
+                "--coverage-mode",
+                "center",
+                "--window-minutes",
+                "5",
+                "--allowed-lateness-minutes",
+                "0",
+                "--strict-validation",
+            ]
+        )
+        == 0
+    )
     result = json.loads(capsys.readouterr().out)
     assert result["metadata"]["h3_resolution"] == 8
     assert result["metadata"]["coverage_mode"] == "center"
@@ -97,7 +158,12 @@ def test_process_and_replay_use_configured_settings(tmp_path, monkeypatch, capsy
         return real_replay(events, publish, sleep=delays.append, **kwargs)
 
     monkeypatch.setattr(generator, "replay_events", replay)
-    assert cli.main(["replay", "--input-dir", str(inputs), "--stream-dir", str(stream), "--speed", "120"]) == 0
+    assert (
+        cli.main(
+            ["replay", "--input-dir", str(inputs), "--stream-dir", str(stream), "--speed", "120"]
+        )
+        == 0
+    )
     result = json.loads(capsys.readouterr().out)
     assert result == {"generated": 8, "published": 8, "rejected": 0}
     assert delays and 2.5 in delays
@@ -105,8 +171,20 @@ def test_process_and_replay_use_configured_settings(tmp_path, monkeypatch, capsy
 
 
 def test_compare_resolutions_writes_report(tmp_path, capsys):
-    assert cli.main(["compare-resolutions", "--report-path", str(tmp_path / "reports" / "run.json"),
-                     "--vessels", "2", "--duration-minutes", "15"]) == 0
+    assert (
+        cli.main(
+            [
+                "compare-resolutions",
+                "--report-path",
+                str(tmp_path / "reports" / "run.json"),
+                "--vessels",
+                "2",
+                "--duration-minutes",
+                "15",
+            ]
+        )
+        == 0
+    )
     rows = json.loads(capsys.readouterr().out)
     assert [row["resolution"] for row in rows] == [7, 8]
     assert json.loads((tmp_path / "reports" / "resolution-comparison.json").read_text()) == rows
@@ -138,12 +216,30 @@ def test_optional_spark_command_wires_settings_and_stops_session(tmp_path, monke
     query.isActive = False
     run_stream = Mock(return_value=query)
     monkeypatch.setattr(cli, "_spark_available", lambda: True)
-    monkeypatch.setitem(sys.modules, "georisk.processing.spark_stream_job", SimpleNamespace(run_stream=run_stream))
-    monkeypatch.setitem(sys.modules, "georisk.spark_session", SimpleNamespace(get_spark=lambda name: spark))
-    args = ["spark-stream", "--stream-dir", str(tmp_path / "stream"), "--output-dir", str(tmp_path / "lake"),
-            "--checkpoint-dir", str(tmp_path / "checkpoint"), "--allowed-lateness-minutes", "20"]
+    monkeypatch.setitem(
+        sys.modules, "georisk.processing.spark_stream_job", SimpleNamespace(run_stream=run_stream)
+    )
+    monkeypatch.setitem(
+        sys.modules, "georisk.spark_session", SimpleNamespace(get_spark=lambda name: spark)
+    )
+    args = [
+        "spark-stream",
+        "--stream-dir",
+        str(tmp_path / "stream"),
+        "--output-dir",
+        str(tmp_path / "lake"),
+        "--checkpoint-dir",
+        str(tmp_path / "checkpoint"),
+        "--allowed-lateness-minutes",
+        "20",
+    ]
     assert cli.main(args + (["--watch"] if watch else [])) == 0
-    assert run_stream.call_args.args == (spark, tmp_path / "stream", tmp_path / "lake", tmp_path / "checkpoint")
+    assert run_stream.call_args.args == (
+        spark,
+        tmp_path / "stream",
+        tmp_path / "lake",
+        tmp_path / "checkpoint",
+    )
     assert run_stream.call_args.kwargs["available_now"] is not watch
     assert run_stream.call_args.kwargs["allowed_lateness_minutes"] == 20
     query.awaitTermination.assert_called_once()
@@ -153,7 +249,9 @@ def test_optional_spark_command_wires_settings_and_stops_session(tmp_path, monke
 def test_run_rejected_acceptance_exit_code_and_override(monkeypatch):
     from georisk import pipeline
 
-    monkeypatch.setattr(pipeline, "run_end_to_end", lambda settings: {"acceptance": {"passed": False}})
+    monkeypatch.setattr(
+        pipeline, "run_end_to_end", lambda settings: {"acceptance": {"passed": False}}
+    )
     assert cli.main(["run"]) == 1
     assert cli.main(["run", "--no-acceptance-required"]) == 0
 

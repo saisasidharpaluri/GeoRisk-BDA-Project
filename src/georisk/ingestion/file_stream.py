@@ -39,8 +39,11 @@ class FileStreamPublisher:
         directory = self.root / stream_name
         directory.mkdir(parents=True, exist_ok=True)
         if stream_name not in self._sequences:
-            existing = [int(path.stem[5:]) for path in directory.glob("part-*.jsonl")
-                        if path.stem[5:].isdigit()]
+            existing = [
+                int(path.stem[5:])
+                for path in directory.glob("part-*.jsonl")
+                if path.stem[5:].isdigit()
+            ]
             self._sequences[stream_name] = max(existing, default=-1) + 1
         sequence = self._sequences[stream_name]
         temporary = directory / f".part-{sequence:06d}.tmp"
@@ -68,7 +71,9 @@ class FileStreamPublisher:
         return self
 
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None,
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
         self.close()

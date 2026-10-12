@@ -17,7 +17,9 @@ from georisk.processing.stream_job import process_events
 from georisk.storage_analytics.delay_features import build_delay_rows
 from georisk.storage_analytics.delay_model import FEATURES, split_by_time, train_and_evaluate
 from georisk.storage_analytics.spark_delay_model import (
-    predict_gbt, save_gbt_model, train_and_evaluate_gbt,
+    predict_gbt,
+    save_gbt_model,
+    train_and_evaluate_gbt,
 )
 
 
@@ -26,8 +28,12 @@ def fitted_gbt(spark):
     scenario = generate_scenario(ScenarioConfig(seed=7, vessel_count=20))
     processed = process_events(scenario["telemetry"], scenario["weather_alerts"])
     rows = build_delay_rows(
-        scenario["telemetry"], processed["risk_events"], processed["density_metrics"],
-        destination=DEMO_NODES["port_b"], window_minutes=15, seed=7,
+        scenario["telemetry"],
+        processed["risk_events"],
+        processed["density_metrics"],
+        destination=DEMO_NODES["port_b"],
+        window_minutes=15,
+        seed=7,
     )
     training, evaluation = split_by_time(rows)
     return train_and_evaluate_gbt(spark, training, evaluation), training, evaluation
@@ -48,8 +54,13 @@ def test_gbt_result_shape_matches_linear(fitted_gbt):
     assert len(result["predictions"]) == result["evaluation_count"] == len(evaluation)
     mean = sum(row["delay_hours"] for row in training) / len(training)
     assert result["baseline_predictions"] == [mean] * len(evaluation)
-    errors = [prediction - row["delay_hours"] for prediction, row in zip(result["predictions"], evaluation)]
-    assert result["model_metrics"]["mae"] == pytest.approx(sum(abs(error) for error in errors) / len(errors))
+    errors = [
+        prediction - row["delay_hours"]
+        for prediction, row in zip(result["predictions"], evaluation)
+    ]
+    assert result["model_metrics"]["mae"] == pytest.approx(
+        sum(abs(error) for error in errors) / len(errors)
+    )
 
 
 def test_gbt_saved_pipeline_preserves_prediction_order(spark, fitted_gbt, tmp_path):
@@ -63,13 +74,20 @@ def test_gbt_saved_pipeline_preserves_prediction_order(spark, fitted_gbt, tmp_pa
 
 def test_gbt_pipeline_writes_estimates_model_and_report(spark, tmp_path):
     settings = GeoRiskConfig(
-        delay_model="gbt", input_dir=tmp_path / "data", processed_dir=tmp_path / "processed",
-        lake_dir=tmp_path / "lake", dashboard_dir=tmp_path, report_path=tmp_path / "report.json",
+        delay_model="gbt",
+        input_dir=tmp_path / "data",
+        processed_dir=tmp_path / "processed",
+        lake_dir=tmp_path / "lake",
+        dashboard_dir=tmp_path,
+        report_path=tmp_path / "report.json",
     )
     report = run_end_to_end(settings)
     assert report["model"]["model_name"] == "gbt"
     assert report["acceptance"]["passed"]
-    rows = [json.loads(line) for line in (settings.processed_dir / "delay-estimates.jsonl").read_text().splitlines()]
+    rows = [
+        json.loads(line)
+        for line in (settings.processed_dir / "delay-estimates.jsonl").read_text().splitlines()
+    ]
     assert {row["model_name"] for row in rows} == {"gbt"}
     restored = PipelineModel.load(str(settings.processed_dir / "delay-model-gbt"))
     assert predict_gbt(spark, restored, rows) == [row["predicted_delay_hours"] for row in rows]

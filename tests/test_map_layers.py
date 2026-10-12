@@ -4,24 +4,45 @@ pytest.importorskip("pydeck")
 
 from georisk.geo_demo import DEMO_BBOX, DEMO_NODES  # noqa: E402
 from georisk.route_dashboard.map_layers import (  # noqa: E402
-    ALERT_RED, INK, build_deck, density_layer, hazards_layer, node_layers, risk_cells_layer,
-    route_layer, vessels_layer,
+    ALERT_RED,
+    INK,
+    build_deck,
+    density_layer,
+    hazards_layer,
+    node_layers,
+    risk_cells_layer,
+    route_layer,
+    vessels_layer,
 )
 from georisk.route_dashboard.route_optimizer import (  # noqa: E402
-    demonstration_graph, find_alternative_route,
+    demonstration_graph,
+    find_alternative_route,
 )
 
 ALERT = {
-    "alert_id": "H1", "hazard_type": "storm", "severity": 4,
-    "valid_from": "2026-01-01T12:00:00Z", "valid_until": "2026-01-01T14:00:00Z",
-    "geometry": {"type": "Polygon", "coordinates": [[
-        [81.08, 12.98], [81.32, 12.98], [81.32, 13.22], [81.08, 13.22], [81.08, 12.98]]]},
+    "alert_id": "H1",
+    "hazard_type": "storm",
+    "severity": 4,
+    "valid_from": "2026-01-01T12:00:00Z",
+    "valid_until": "2026-01-01T14:00:00Z",
+    "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+            [[81.08, 12.98], [81.32, 12.98], [81.32, 13.22], [81.08, 13.22], [81.08, 12.98]]
+        ],
+    },
 }
 
 
 def _position(vessel, lat=13.1, lon=81.2):
-    return {"vessel_id": vessel, "latitude": lat, "longitude": lon,
-            "event_time": "2026-01-01T12:00:00Z", "speed_knots": 12, "heading_deg": 90}
+    return {
+        "vessel_id": vessel,
+        "latitude": lat,
+        "longitude": lon,
+        "event_time": "2026-01-01T12:00:00Z",
+        "speed_knots": 12,
+        "heading_deg": 90,
+    }
 
 
 def test_vessels_layer_colors_alerted_red():
@@ -48,10 +69,18 @@ def test_hazard_polygon_uses_lon_lat_order():
 
 def test_risk_cells_layer_keeps_alerted_cells():
     events = [
-        {"vessel_id": "a", "h3_index": "c1", "risk_alert": True,
-         "matching_hazards": [{"severity": 4}]},
-        {"vessel_id": "b", "h3_index": "c1", "risk_alert": True,
-         "matching_hazards": [{"severity": 2}]},
+        {
+            "vessel_id": "a",
+            "h3_index": "c1",
+            "risk_alert": True,
+            "matching_hazards": [{"severity": 4}],
+        },
+        {
+            "vessel_id": "b",
+            "h3_index": "c1",
+            "risk_alert": True,
+            "matching_hazards": [{"severity": 2}],
+        },
         {"vessel_id": "c", "h3_index": "c2", "risk_alert": False, "matching_hazards": []},
     ]
     layer = risk_cells_layer(events)
@@ -60,8 +89,10 @@ def test_risk_cells_layer_keeps_alerted_cells():
 
 
 def test_density_layer_extrudes_by_count():
-    rows = [{"h3_index": "c1", "unique_vessel_count": 3, "window_start": "w"},
-            {"h3_index": "c2", "unique_vessel_count": 1, "window_start": "w"}]
+    rows = [
+        {"h3_index": "c1", "unique_vessel_count": 3, "window_start": "w"},
+        {"h3_index": "c2", "unique_vessel_count": 1, "window_start": "w"},
+    ]
     layer = density_layer(rows)
     assert layer.type == "H3HexagonLayer" and len(layer.data) == 2
     assert layer.extruded is True
@@ -100,8 +131,13 @@ def test_literal_props_are_not_serialized_as_accessors():
     import json
 
     route = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
-    deck = build_deck([vessels_layer([_position("a")], []), route_layer(route, DEMO_NODES),
-                       *node_layers(DEMO_NODES)])
+    deck = build_deck(
+        [
+            vessels_layer([_position("a")], []),
+            route_layer(route, DEMO_NODES),
+            *node_layers(DEMO_NODES),
+        ]
+    )
     layers = {layer["id"]: layer for layer in json.loads(deck.to_json())["layers"]}
     assert layers["vessels"]["radiusUnits"] == "pixels"
     assert layers["route"]["widthUnits"] == "pixels"

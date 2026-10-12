@@ -21,7 +21,9 @@ def test_process_events_logs_settings(caplog):
 
 
 def test_json_formatter_outputs_valid_json():
-    record = logging.LogRecord("georisk.test", logging.INFO, __file__, 1, "Hello %s\nnext", ("world",), None)
+    record = logging.LogRecord(
+        "georisk.test", logging.INFO, __file__, 1, "Hello %s\nnext", ("world",), None
+    )
     record.georisk = {"coverage_mode": "overlap", "h3_resolution": 7, "counts": {"late": 2}}
     formatted = JsonFormatter().format(record)
     assert len(formatted.splitlines()) == 1

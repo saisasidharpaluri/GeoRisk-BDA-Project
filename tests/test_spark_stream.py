@@ -68,9 +68,12 @@ def test_spark_output_readable_by_lake_read_dataset(spark, tmp_path, stream_data
     rows = read_dataset(tmp_path / "output", "risk_events")
     for row in without_date(rows):
         validate_event("risk_event", row)
-    expected = process_events(stream_data["telemetry"], stream_data["weather_alerts"])["risk_events"]
-    assert sorted(without_date(rows), key=lambda row: row["event_id"]) == \
-        sorted(expected, key=lambda row: row["event_id"])
+    expected = process_events(stream_data["telemetry"], stream_data["weather_alerts"])[
+        "risk_events"
+    ]
+    assert sorted(without_date(rows), key=lambda row: row["event_id"]) == sorted(
+        expected, key=lambda row: row["event_id"]
+    )
 
 
 def test_stream_quarantines_invalid_telemetry_and_alerts(spark, tmp_path, stream_data):
@@ -80,8 +83,12 @@ def test_stream_quarantines_invalid_telemetry_and_alerts(spark, tmp_path, stream
     run(spark, tmp_path)
     rows = read_dataset(tmp_path / "output", "risk_events")
     assert len(rows) == 1 and not rows[0]["risk_alert"]
-    rejected = [json.loads(line) for path in (tmp_path / "output" / "quarantine").rglob("*")
-                if path.suffix in (".json", ".jsonl") for line in path.read_text().splitlines()]
+    rejected = [
+        json.loads(line)
+        for path in (tmp_path / "output" / "quarantine").rglob("*")
+        if path.suffix in (".json", ".jsonl")
+        for line in path.read_text().splitlines()
+    ]
     assert len(rejected) == 2
     assert {row["reason"] for row in rejected} == {"contract_violation"}
 
@@ -105,14 +112,17 @@ def test_stream_density_equals_batch_density_after_two_batches(spark, tmp_path, 
 
 def test_stream_density_preserves_untouched_dates(spark, tmp_path, stream_data):
     first = stream_data["telemetry"][:3]
-    next_day = [dict(row, event_id=f"next-{i}", event_time="2026-01-02T12:00:00Z")
-                for i, row in enumerate(first)]
+    next_day = [
+        dict(row, event_id=f"next-{i}", event_time="2026-01-02T12:00:00Z")
+        for i, row in enumerate(first)
+    ]
     publish(tmp_path / "input", first)
     run(spark, tmp_path)
     publish(tmp_path / "input", next_day)
     run(spark, tmp_path)
     assert {row["event_date"] for row in read_dataset(tmp_path / "output", "density_metrics")} == {
-        "2026-01-01", "2026-01-02",
+        "2026-01-01",
+        "2026-01-02",
     }
 
 
@@ -129,8 +139,11 @@ def test_stream_quarantines_late_events(spark, tmp_path, stream_data, monkeypatc
     rows = read_dataset(tmp_path / "output", "risk_events")
     expected = process_events([recent, boundary, late], [])
     assert {row["event_id"] for row in rows} == {row["event_id"] for row in expected["risk_events"]}
-    rejected = [json.loads(line) for path in (tmp_path / "output" / "quarantine" / "late").rglob("*.json")
-                for line in path.read_text().splitlines()]
+    rejected = [
+        json.loads(line)
+        for path in (tmp_path / "output" / "quarantine" / "late").rglob("*.json")
+        for line in path.read_text().splitlines()
+    ]
     assert [(row["event_id"], row["reason"]) for row in rejected] == [("late", "late_event")]
     assert json.loads((tmp_path / "checkpoint" / "georisk-watermark.json").read_text()) == {
         "max_event_time": recent["event_time"],
@@ -141,9 +154,13 @@ def test_stream_invalid_and_duplicate_rows_do_not_advance_watermark(spark, tmp_p
     event = stream_data["telemetry"][0]
     publish(tmp_path / "input", [event])
     run(spark, tmp_path)
-    publish(tmp_path / "input", [dict(event, event_time="2026-01-01T23:00:00Z"),
-                                  dict(event, event_id="invalid", latitude=100,
-                                       event_time="2026-01-02T12:00:00Z")])
+    publish(
+        tmp_path / "input",
+        [
+            dict(event, event_time="2026-01-01T23:00:00Z"),
+            dict(event, event_id="invalid", latitude=100, event_time="2026-01-02T12:00:00Z"),
+        ],
+    )
     run(spark, tmp_path)
     assert json.loads((tmp_path / "checkpoint" / "georisk-watermark.json").read_text()) == {
         "max_event_time": event["event_time"],
@@ -151,7 +168,10 @@ def test_stream_invalid_and_duplicate_rows_do_not_advance_watermark(spark, tmp_p
 
 
 def test_stream_recovers_after_sink_writes_before_checkpoint_commit(
-    spark, tmp_path, stream_data, monkeypatch,
+    spark,
+    tmp_path,
+    stream_data,
+    monkeypatch,
 ):
     from pyspark.errors import StreamingQueryException
 
@@ -172,5 +192,6 @@ def test_stream_recovers_after_sink_writes_before_checkpoint_commit(
     run(spark, tmp_path)
     assert len(read_dataset(tmp_path / "output", "risk_events")) == len(telemetry)
     key = lambda row: (row["window_start"], row["h3_index"])
-    assert sorted(without_date(read_dataset(tmp_path / "output", "density_metrics")), key=key) == \
-        sorted(process_events(telemetry, [])["density_metrics"], key=key)
+    assert sorted(
+        without_date(read_dataset(tmp_path / "output", "density_metrics")), key=key
+    ) == sorted(process_events(telemetry, [])["density_metrics"], key=key)

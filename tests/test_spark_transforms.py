@@ -10,7 +10,13 @@ pytestmark = pytest.mark.spark
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.processing.h3_index import point_to_cell
 from georisk.processing.spark_transforms import (
-    assign_h3, density, hazard_cells_df, match_risk, read_alerts, read_telemetry, split_valid,
+    assign_h3,
+    density,
+    hazard_cells_df,
+    match_risk,
+    read_alerts,
+    read_telemetry,
+    split_valid,
 )
 from georisk.processing.stream_job import process_events
 
@@ -34,12 +40,22 @@ def test_spark_h3_matches_python(spark, tmp_path, scenario):
     assert all(row.h3_resolution == 7 for row in rows)
 
 
-@pytest.mark.parametrize("update", [
-    {"latitude": 91}, {"longitude": -181}, {"speed_knots": -1},
-    {"speed_knots": 61}, {"heading_deg": 360}, {"heading_deg": None},
-    {"event_id": ""}, {"schema_version": 2}, {"latitude": float("nan")},
-    {"event_time": "2026-01-01T12:00:00+05:30"}, {"event_time": "invalid"},
-])
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"latitude": 91},
+        {"longitude": -181},
+        {"speed_knots": -1},
+        {"speed_knots": 61},
+        {"heading_deg": 360},
+        {"heading_deg": None},
+        {"event_id": ""},
+        {"schema_version": 2},
+        {"latitude": float("nan")},
+        {"event_time": "2026-01-01T12:00:00+05:30"},
+        {"event_time": "invalid"},
+    ],
+)
 def test_spark_split_valid_flags_bad_latitude(spark, tmp_path, scenario, update):
     good = scenario["telemetry"][0]
     valid, invalid = split_valid(telemetry_df(spark, tmp_path, [good, dict(good, **update)]))
@@ -70,11 +86,13 @@ def test_spark_risk_matches_process_events(spark, tmp_path, scenario, coverage_m
     telemetry = scenario["telemetry"]
     alerts = scenario["weather_alerts"]
     valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry))
-    result = match_risk(assign_h3(valid, 7), hazard_cells_df(spark, alerts, 7, coverage_mode),
-                        coverage_mode)
+    result = match_risk(
+        assign_h3(valid, 7), hazard_cells_df(spark, alerts, 7, coverage_mode), coverage_mode
+    )
     expected = process_events(telemetry, alerts, coverage_mode=coverage_mode)["risk_events"]
-    assert sorted((row.asDict(recursive=True) for row in result.collect()),
-                  key=lambda row: row["event_id"]) == sorted(expected, key=lambda row: row["event_id"])
+    assert sorted(
+        (row.asDict(recursive=True) for row in result.collect()), key=lambda row: row["event_id"]
+    ) == sorted(expected, key=lambda row: row["event_id"])
 
 
 def test_spark_risk_empty_hazards_and_revisions(spark, tmp_path, scenario):
@@ -82,15 +100,27 @@ def test_spark_risk_empty_hazards_and_revisions(spark, tmp_path, scenario):
     revision = dict(original, event_id="revision", event_time="2026-01-01T12:05:00Z", severity=5)
     ring = original["geometry"]["coordinates"][0]
     lon, lat = ring[0]
-    telemetry = [dict(scenario["telemetry"][0], latitude=lat, longitude=lon,
-                      event_id=f"boundary-{i}", event_time=time)
-                 for i, time in enumerate([original["valid_from"], original["valid_until"]])]
+    telemetry = [
+        dict(
+            scenario["telemetry"][0],
+            latitude=lat,
+            longitude=lon,
+            event_id=f"boundary-{i}",
+            event_time=time,
+        )
+        for i, time in enumerate([original["valid_from"], original["valid_until"]])
+    ]
     valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry))
     indexed = assign_h3(valid, 7)
     for alerts in ([], [original, revision]):
-        rows = match_risk(indexed, hazard_cells_df(spark, alerts, 7, "overlap"), "overlap").collect()
-        assert sorted((row.asDict(recursive=True) for row in rows), key=lambda row: row["event_id"]) == \
-            sorted(process_events(telemetry, alerts)["risk_events"], key=lambda row: row["event_id"])
+        rows = match_risk(
+            indexed, hazard_cells_df(spark, alerts, 7, "overlap"), "overlap"
+        ).collect()
+        assert sorted(
+            (row.asDict(recursive=True) for row in rows), key=lambda row: row["event_id"]
+        ) == sorted(
+            process_events(telemetry, alerts)["risk_events"], key=lambda row: row["event_id"]
+        )
 
 
 @pytest.mark.parametrize("minutes", [5, 15, 60, 120])
@@ -104,10 +134,13 @@ def test_spark_density_matches_process_events(spark, tmp_path, scenario, minutes
 
 
 def test_spark_density_window_boundary(spark, tmp_path, scenario):
-    telemetry = [dict(scenario["telemetry"][0], event_id=f"boundary-{i}", event_time=time)
-                 for i, time in enumerate(["2026-01-01T12:14:59Z", "2026-01-01T12:15:00Z"])]
+    telemetry = [
+        dict(scenario["telemetry"][0], event_id=f"boundary-{i}", event_time=time)
+        for i, time in enumerate(["2026-01-01T12:14:59Z", "2026-01-01T12:15:00Z"])
+    ]
     valid, _ = split_valid(telemetry_df(spark, tmp_path, telemetry))
     rows = density(assign_h3(valid, 7), 15).orderBy("window_start").collect()
     assert [(row.window_start, row.unique_vessel_count) for row in rows] == [
-        ("2026-01-01T12:00:00Z", 1), ("2026-01-01T12:15:00Z", 1),
+        ("2026-01-01T12:00:00Z", 1),
+        ("2026-01-01T12:15:00Z", 1),
     ]

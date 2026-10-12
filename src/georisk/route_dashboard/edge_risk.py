@@ -13,35 +13,56 @@ from georisk.processing.h3_index import COVERAGE_MODES, point_to_cell, polygon_t
 
 
 def edge_cells(
-    nodes: Mapping[str, tuple[float, float]], source: str, target: str, resolution: int,
+    nodes: Mapping[str, tuple[float, float]],
+    source: str,
+    target: str,
+    resolution: int,
 ) -> list[str]:
     """Return H3 cells along the grid path joining an edge's endpoints."""
-    return list(h3.grid_path_cells(
-        point_to_cell(*nodes[source], resolution), point_to_cell(*nodes[target], resolution)
-    ))
+    return list(
+        h3.grid_path_cells(
+            point_to_cell(*nodes[source], resolution), point_to_cell(*nodes[target], resolution)
+        )
+    )
 
 
 def _utc(value: str | datetime) -> datetime:
-    timestamp = datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+    timestamp = (
+        datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+    )
     if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware")
     return timestamp.astimezone(timezone.utc)
 
 
 def score_graph(
-    graph: Mapping[str, list[dict[str, Any]]], nodes: Mapping[str, tuple[float, float]],
-    alerts: Iterable[dict[str, Any]], density_metrics: Iterable[dict[str, Any]], *,
-    at_time: str | datetime, resolution: int, coverage_mode: str,
-    severity_weight: float = 0.7, density_weight: float = 0.3, density_saturation: float = 5,
+    graph: Mapping[str, list[dict[str, Any]]],
+    nodes: Mapping[str, tuple[float, float]],
+    alerts: Iterable[dict[str, Any]],
+    density_metrics: Iterable[dict[str, Any]],
+    *,
+    at_time: str | datetime,
+    resolution: int,
+    coverage_mode: str,
+    severity_weight: float = 0.7,
+    density_weight: float = 0.3,
+    density_saturation: float = 5,
 ) -> dict[str, list[dict[str, Any]]]:
     """Return a scored deep copy; validity and density windows are half-open."""
     timestamp = _utc(at_time)
     if coverage_mode not in COVERAGE_MODES:
         raise ValueError("coverage_mode must be center or overlap")
-    for name, value in (("severity_weight", severity_weight), ("density_weight", density_weight),
-                        ("density_saturation", density_saturation)):
-        if (not isinstance(value, (int, float)) or isinstance(value, bool)
-                or not math.isfinite(value) or value < 0):
+    for name, value in (
+        ("severity_weight", severity_weight),
+        ("density_weight", density_weight),
+        ("density_saturation", density_saturation),
+    ):
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or value < 0
+        ):
             raise ValueError(f"{name} must be a non-negative finite number")
     if density_saturation == 0:
         raise ValueError("density_saturation must be positive")
@@ -69,10 +90,14 @@ def score_graph(
             matches = [alert for alert, coverage in active if cells & coverage]
             severity = max((alert["severity"] for alert in matches), default=0)
             count = max((density.get(cell, 0) for cell in cells), default=0)
-            edge["risk"] = round(min(
-                1.0, severity_weight * severity / 5
-                + density_weight * min(1.0, count / density_saturation)
-            ), 3)
+            edge["risk"] = round(
+                min(
+                    1.0,
+                    severity_weight * severity / 5
+                    + density_weight * min(1.0, count / density_saturation),
+                ),
+                3,
+            )
             edge["risk_detail"] = {
                 "max_severity": severity,
                 "alert_ids": sorted(alert["alert_id"] for alert in matches),

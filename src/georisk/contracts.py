@@ -27,9 +27,7 @@ def _is_utc_datetime(value: object) -> bool:
     if not isinstance(value, str):
         return False
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return parsed.tzinfo is not None and parsed.utcoffset() == timezone.utc.utcoffset(
-        parsed
-    )
+    return parsed.tzinfo is not None and parsed.utcoffset() == timezone.utc.utcoffset(parsed)
 
 
 class ContractValidationError(ValueError):
@@ -46,12 +44,7 @@ def _schema_path(contract: str) -> Traversable:
     if contract not in SUPPORTED_CONTRACTS:
         supported = ", ".join(sorted(SUPPORTED_CONTRACTS))
         raise ValueError(f"Unsupported contract '{contract}'. Expected one of: {supported}")
-    return (
-        files("georisk")
-        / "schemas"
-        / "v1"
-        / f"{contract}.schema.json"
-    )
+    return files("georisk") / "schemas" / "v1" / f"{contract}.schema.json"
 
 
 def load_schema(contract: str) -> dict[str, Any]:
@@ -102,8 +95,7 @@ def validate_event(contract: str, event: Mapping[str, Any]) -> None:
     errors = sorted(validator.iter_errors(dict(event)), key=lambda error: list(error.path))
     if errors:
         messages = [
-            f"{'.'.join(map(str, error.path)) or '<root>'}: {error.message}"
-            for error in errors
+            f"{'.'.join(map(str, error.path)) or '<root>'}: {error.message}" for error in errors
         ]
         raise ContractValidationError(contract, messages)
     semantic_errors = _semantic_errors(contract, event)

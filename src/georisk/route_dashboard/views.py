@@ -12,8 +12,9 @@ ROUTE_SCENARIOS = ("As generated", "No hazards", "Close inner lane")
 
 
 def _utc(value: str | datetime) -> datetime:
-    timestamp = (datetime.fromisoformat(value.replace("Z", "+00:00"))
-                 if isinstance(value, str) else value)
+    timestamp = (
+        datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+    )
     if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware")
     return timestamp.astimezone(timezone.utc)
@@ -24,11 +25,14 @@ def _iso(value: datetime) -> str:
 
 
 def _max_severity(event: Mapping[str, Any]) -> int:
-    return max((hazard.get("severity", 0) for hazard in event.get("matching_hazards") or []),
-               default=0)
+    return max(
+        (hazard.get("severity", 0) for hazard in event.get("matching_hazards") or []), default=0
+    )
 
 
-def active_alerts(alerts: Iterable[Mapping[str, Any]], at_time: str | datetime) -> list[dict[str, Any]]:
+def active_alerts(
+    alerts: Iterable[Mapping[str, Any]], at_time: str | datetime
+) -> list[dict[str, Any]]:
     """Return alerts valid at ``at_time`` (half-open), using each alert's latest revision.
 
     Revisions published after ``at_time`` are ignored, matching route scoring.
@@ -42,8 +46,11 @@ def active_alerts(alerts: Iterable[Mapping[str, Any]], at_time: str | datetime) 
         if previous is None or _utc(alert["event_time"]) >= _utc(previous["event_time"]):
             latest[alert["alert_id"]] = alert
     return sorted(
-        (dict(alert) for alert in latest.values()
-         if _utc(alert["valid_from"]) <= timestamp < _utc(alert["valid_until"])),
+        (
+            dict(alert)
+            for alert in latest.values()
+            if _utc(alert["valid_from"]) <= timestamp < _utc(alert["valid_until"])
+        ),
         key=lambda alert: (-alert["severity"], alert["alert_id"]),
     )
 
@@ -59,8 +66,11 @@ def severity_distribution(risk_events: Iterable[Mapping[str, Any]]) -> dict[int,
 
 
 def filter_risk_events(
-    risk_events: Iterable[Mapping[str, Any]], *, hazard_types: Iterable[str] | None = None,
-    min_severity: int | None = None, start: str | datetime | None = None,
+    risk_events: Iterable[Mapping[str, Any]],
+    *,
+    hazard_types: Iterable[str] | None = None,
+    min_severity: int | None = None,
+    start: str | datetime | None = None,
     end: str | datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Filter by matched hazard type, minimum severity, and inclusive event-time range.
@@ -91,7 +101,8 @@ def density_windows(density_metrics: Iterable[Mapping[str, Any]]) -> list[str]:
 
 
 def density_for_window(
-    density_metrics: Iterable[Mapping[str, Any]], window_start: str,
+    density_metrics: Iterable[Mapping[str, Any]],
+    window_start: str,
 ) -> list[dict[str, Any]]:
     """Return one window's rows, busiest cell first."""
     rows = [dict(row) for row in density_metrics if row["window_start"] == window_start]
@@ -99,7 +110,8 @@ def density_for_window(
 
 
 def compare_adjacent_windows(
-    density_metrics: Iterable[Mapping[str, Any]], window_start: str,
+    density_metrics: Iterable[Mapping[str, Any]],
+    window_start: str,
 ) -> list[dict[str, Any]]:
     """Compare each cell's count with the previous and next windows.
 
@@ -122,10 +134,13 @@ def compare_adjacent_windows(
             if window is not None and row["window_start"] == window:
                 counts.setdefault(row["h3_index"], {})[name] = row["unique_vessel_count"]
     result = [
-        {"h3_index": cell, **{
-            name: (None if window is None else values.get(name, 0))
-            for name, window in neighbours.items()
-        }}
+        {
+            "h3_index": cell,
+            **{
+                name: (None if window is None else values.get(name, 0))
+                for name, window in neighbours.items()
+            },
+        }
         for cell, values in counts.items()
     ]
     return sorted(result, key=lambda row: (-row["current"], row["h3_index"]))
@@ -147,11 +162,16 @@ def latest_risk_by_vessel(risk_events: Iterable[Mapping[str, Any]]) -> dict[str,
 
 
 def freshness(
-    metadata: Mapping[str, Any] | None, now: datetime, stale_after_minutes: int,
+    metadata: Mapping[str, Any] | None,
+    now: datetime,
+    stale_after_minutes: int,
 ) -> dict[str, Any]:
     """Classify the last processing run as ``fresh``, ``stale``, or ``unavailable``."""
-    if (not isinstance(stale_after_minutes, int) or isinstance(stale_after_minutes, bool)
-            or stale_after_minutes <= 0):
+    if (
+        not isinstance(stale_after_minutes, int)
+        or isinstance(stale_after_minutes, bool)
+        or stale_after_minutes <= 0
+    ):
         raise ValueError("stale_after_minutes must be a positive integer")
     metadata = metadata or {}
     result: dict[str, Any] = {
@@ -175,10 +195,14 @@ def risk_table_rows(risk_events: Iterable[Mapping[str, Any]]) -> list[dict[str, 
         {
             "event_time": event["event_time"],
             "vessel_id": event["vessel_id"],
-            "hazards": ", ".join(sorted({
-                f"{hazard['hazard_type']} ({hazard['alert_id']})"
-                for hazard in event.get("matching_hazards") or []
-            })),
+            "hazards": ", ".join(
+                sorted(
+                    {
+                        f"{hazard['hazard_type']} ({hazard['alert_id']})"
+                        for hazard in event.get("matching_hazards") or []
+                    }
+                )
+            ),
             "max_severity": _max_severity(event),
             "h3_index": event.get("h3_index"),
             "coverage_mode": event.get("coverage_mode"),
@@ -216,15 +240,21 @@ def delay_mae(estimates: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     count = len(held_out)
     return {
         "evaluation_count": count,
-        "model_mae_hours": sum(abs(row["predicted_delay_hours"] - row["synthetic_label_hours"])
-                               for row in held_out) / count,
-        "baseline_mae_hours": sum(abs(row["baseline_delay_hours"] - row["synthetic_label_hours"])
-                                  for row in held_out) / count,
+        "model_mae_hours": sum(
+            abs(row["predicted_delay_hours"] - row["synthetic_label_hours"]) for row in held_out
+        )
+        / count,
+        "baseline_mae_hours": sum(
+            abs(row["baseline_delay_hours"] - row["synthetic_label_hours"]) for row in held_out
+        )
+        / count,
     }
 
 
 def route_scenario_alerts(
-    scenario: str, alerts: Iterable[Mapping[str, Any]], at_time: str | datetime,
+    scenario: str,
+    alerts: Iterable[Mapping[str, Any]],
+    at_time: str | datetime,
 ) -> list[dict[str, Any]]:
     """Build the alert list for a route what-if scenario in ``ROUTE_SCENARIOS``."""
     if scenario not in ROUTE_SCENARIOS:
@@ -236,22 +266,36 @@ def route_scenario_alerts(
         timestamp = _utc(at_time)
         latitude, longitude = DEMO_NODES["chokepoint"]
         half = 0.12
-        result.append({
-            "schema_version": 1, "event_id": "what-if-closure-event",
-            "alert_id": "WHAT-IF-CLOSURE", "event_time": _iso(timestamp),
-            "valid_from": _iso(timestamp), "valid_until": _iso(timestamp + timedelta(hours=6)),
-            "hazard_type": "lane_closure", "severity": 5,
-            "geometry": {"type": "Polygon", "coordinates": [[
-                [longitude - half, latitude - half], [longitude + half, latitude - half],
-                [longitude + half, latitude + half], [longitude - half, latitude + half],
-                [longitude - half, latitude - half],
-            ]]},
-        })
+        result.append(
+            {
+                "schema_version": 1,
+                "event_id": "what-if-closure-event",
+                "alert_id": "WHAT-IF-CLOSURE",
+                "event_time": _iso(timestamp),
+                "valid_from": _iso(timestamp),
+                "valid_until": _iso(timestamp + timedelta(hours=6)),
+                "hazard_type": "lane_closure",
+                "severity": 5,
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [
+                            [longitude - half, latitude - half],
+                            [longitude + half, latitude - half],
+                            [longitude + half, latitude + half],
+                            [longitude - half, latitude + half],
+                            [longitude - half, latitude - half],
+                        ]
+                    ],
+                },
+            }
+        )
     return result
 
 
 def lane_status(
-    edge_scores: Mapping[str, list[Mapping[str, Any]]], route: Mapping[str, Any],
+    edge_scores: Mapping[str, list[Mapping[str, Any]]],
+    route: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     """Describe each scored lane: risk, its drivers, and whether it is open or blocked."""
     threshold = route["risk_threshold"]
@@ -269,19 +313,23 @@ def lane_status(
             if detail.get("alert_ids"):
                 drivers[0] += f" ({', '.join(detail['alert_ids'])})"
             drivers.append(f"density {detail.get('max_density', 0)}")
-            used = [name for name, members in (("baseline", baseline), ("alternative", alternative))
-                    if leg in members]
-            rows.append({
-                "lane": f"{source} → {edge['to']}",
-                "distance_nm": round(edge.get("distance_nm", 0.0), 1),
-                "travel_hours": edge["travel_hours"],
-                "risk": edge["risk"],
-                "risk_detail": " · ".join(drivers),
-                "status": "blocked" if edge["risk"] > threshold else "open",
-                "used_by": " + ".join(used) or "—",
-            })
+            used = [
+                name
+                for name, members in (("baseline", baseline), ("alternative", alternative))
+                if leg in members
+            ]
+            rows.append(
+                {
+                    "lane": f"{source} → {edge['to']}",
+                    "distance_nm": round(edge.get("distance_nm", 0.0), 1),
+                    "travel_hours": edge["travel_hours"],
+                    "risk": edge["risk"],
+                    "risk_detail": " · ".join(drivers),
+                    "status": "blocked" if edge["risk"] > threshold else "open",
+                    "used_by": " + ".join(used) or "—",
+                }
+            )
     return rows
-
 
 
 def exposure_series(risk_events: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -291,8 +339,10 @@ def exposure_series(risk_events: Iterable[Mapping[str, Any]]) -> list[dict[str, 
         vessels = exposed.setdefault(event["event_time"], set())
         if event.get("risk_alert"):
             vessels.add(event["vessel_id"])
-    return [{"event_time": time, "exposed_vessels": len(exposed[time])}
-            for time in sorted(exposed, key=_utc)]
+    return [
+        {"event_time": time, "exposed_vessels": len(exposed[time])}
+        for time in sorted(exposed, key=_utc)
+    ]
 
 
 def daily_history(lake_dir: str | Path) -> list[dict[str, Any]]:
@@ -302,10 +352,16 @@ def daily_history(lake_dir: str | Path) -> list[dict[str, Any]]:
     days: dict[str, dict[str, Any]] = {}
 
     def day(event_date: str) -> dict[str, Any]:
-        return days.setdefault(event_date, {
-            "event_date": event_date, "risk_events": 0, "alerted_events": 0,
-            "exposed_vessels": set(), "max_density": 0,
-        })
+        return days.setdefault(
+            event_date,
+            {
+                "event_date": event_date,
+                "risk_events": 0,
+                "alerted_events": 0,
+                "exposed_vessels": set(),
+                "max_density": 0,
+            },
+        )
 
     for row in read_dataset(lake_dir, "risk_events"):
         entry = day(row["event_date"])

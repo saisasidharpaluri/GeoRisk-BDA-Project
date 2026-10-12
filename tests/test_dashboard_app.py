@@ -16,16 +16,26 @@ from georisk.config import GeoRiskConfig  # noqa: E402
 from georisk.pipeline import run_end_to_end  # noqa: E402
 
 DASHBOARD = str(Path(dashboard_module.__file__).resolve())
-PANELS = ("Live map", "Risk summary", "Corridor density", "Delay estimates",
-          "Route comparison", "Data freshness")
+PANELS = (
+    "Live map",
+    "Risk summary",
+    "Corridor density",
+    "Delay estimates",
+    "Route comparison",
+    "Data freshness",
+)
 
 
 @pytest.fixture(scope="module")
 def pipeline_dirs(tmp_path_factory):
     root = tmp_path_factory.mktemp("dashboard")
-    config = GeoRiskConfig(input_dir=root / "data", processed_dir=root / "processed",
-                           lake_dir=root / "lake", dashboard_dir=root,
-                           report_path=root / "reports" / "run.json")
+    config = GeoRiskConfig(
+        input_dir=root / "data",
+        processed_dir=root / "processed",
+        lake_dir=root / "lake",
+        dashboard_dir=root,
+        report_path=root / "reports" / "run.json",
+    )
     run_end_to_end(config)
     return config
 
@@ -41,8 +51,12 @@ def _app(monkeypatch, *, input_dir, processed_dir, lake_dir) -> AppTest:
 
 @pytest.fixture
 def app(pipeline_dirs, monkeypatch):
-    return _app(monkeypatch, input_dir=pipeline_dirs.input_dir,
-                processed_dir=pipeline_dirs.processed_dir, lake_dir=pipeline_dirs.lake_dir)
+    return _app(
+        monkeypatch,
+        input_dir=pipeline_dirs.input_dir,
+        processed_dir=pipeline_dirs.processed_dir,
+        lake_dir=pipeline_dirs.lake_dir,
+    )
 
 
 def _table(at, column):
@@ -61,14 +75,22 @@ def test_dashboard_shows_all_panels(app):
 
 
 def test_dashboard_no_data_state(tmp_path, monkeypatch):
-    at = _app(monkeypatch, input_dir=tmp_path / "in", processed_dir=tmp_path / "out",
-              lake_dir=tmp_path / "lake")
+    at = _app(
+        monkeypatch,
+        input_dir=tmp_path / "in",
+        processed_dir=tmp_path / "out",
+        lake_dir=tmp_path / "lake",
+    )
     assert not at.exception
     assert any("No vessel telemetry" in element.value for element in at.warning)
     assert any("Unavailable" in element.value for element in at.error)
     infos = " ".join(element.value for element in at.info)
-    for message in ("No risk events yet", "No density metrics yet", "No delay estimates yet",
-                    "no curated risk or density data"):
+    for message in (
+        "No risk events yet",
+        "No density metrics yet",
+        "No delay estimates yet",
+        "no curated risk or density data",
+    ):
         assert message in infos
 
 
@@ -118,12 +140,20 @@ def test_delay_demo_mode_toggle(app):
     assert len(_table(app, "error_hours")) > 0
     app.toggle(key="delay_truth").set_value(True).run()
     assert not app.exception
-    assert any("Synthetic demonstration, not a real-world forecast." == element.value
-               for element in app.caption)
+    assert any(
+        "Synthetic demonstration, not a real-world forecast." == element.value
+        for element in app.caption
+    )
 
 
 def test_layer_toggles_and_auto_refresh(app):
-    for key in ("layer_vessels", "layer_hazards", "layer_risk_cells", "layer_density", "layer_route"):
+    for key in (
+        "layer_vessels",
+        "layer_hazards",
+        "layer_risk_cells",
+        "layer_density",
+        "layer_route",
+    ):
         app.checkbox(key=key).uncheck()
     app.toggle(key="auto_refresh").set_value(True).run()
     assert not app.exception

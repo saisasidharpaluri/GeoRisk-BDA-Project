@@ -68,6 +68,7 @@ from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 
 settings = GeoRiskConfig.from_env()
 with FileStreamPublisher(settings.stream_dir) as publish:
-    replay_events(generate_scenario(ScenarioConfig()), publish,
-                  speed_factor=settings.replay_speed_factor)
+    replay_events(
+        generate_scenario(ScenarioConfig()), publish, speed_factor=settings.replay_speed_factor
+    )
 ```

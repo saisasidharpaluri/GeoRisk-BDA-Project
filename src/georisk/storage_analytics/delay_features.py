@@ -23,11 +23,19 @@ def build_delay_rows(
     noise_std_hours: float = 0.25,
 ) -> list[dict[str, Any]]:
     """Join risks to telemetry and cell/window density; destination is lat/lon."""
-    if (not isinstance(window_minutes, int) or isinstance(window_minutes, bool)
-            or not 1 <= window_minutes <= 1440 or 1440 % window_minutes != 0):
+    if (
+        not isinstance(window_minutes, int)
+        or isinstance(window_minutes, bool)
+        or not 1 <= window_minutes <= 1440
+        or 1440 % window_minutes != 0
+    ):
         raise ValueError("window_minutes must be 1..1440 and divide 1440")
-    if (not isinstance(noise_std_hours, (int, float)) or isinstance(noise_std_hours, bool)
-            or not math.isfinite(noise_std_hours) or noise_std_hours < 0):
+    if (
+        not isinstance(noise_std_hours, (int, float))
+        or isinstance(noise_std_hours, bool)
+        or not math.isfinite(noise_std_hours)
+        or noise_std_hours < 0
+    ):
         raise ValueError("noise_std_hours must be a non-negative finite number")
     telemetry_by_id = {}
     for event in telemetry:
@@ -45,7 +53,9 @@ def build_delay_rows(
         position = telemetry_by_id[event_id]
         speed = max(1.0, float(position["speed_knots"]))
         distance = haversine_nm(
-            float(position["latitude"]), float(position["longitude"]), *destination,
+            float(position["latitude"]),
+            float(position["longitude"]),
+            *destination,
         )
         window = _window_start(_parse_utc(event["event_time"]), window_minutes)
         row = {
@@ -57,7 +67,8 @@ def build_delay_rows(
             "baseline_hours": distance / speed,
             "density": density_by_window_cell.get((window, event["h3_index"]), 0),
             "hazard_severity": max(
-                (hazard["severity"] for hazard in event["matching_hazards"]), default=0,
+                (hazard["severity"] for hazard in event["matching_hazards"]),
+                default=0,
             ),
         }
         row["delay_hours"] = make_synthetic_label(row, rng.gauss(0, noise_std_hours))

@@ -13,7 +13,11 @@ UTC = timezone.utc
 
 
 def _timestamp(minutes=0):
-    return (datetime(2026, 1, 1, 12, 0, tzinfo=UTC) + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+    return (
+        (datetime(2026, 1, 1, 12, 0, tzinfo=UTC) + timedelta(minutes=minutes))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _telemetry(vessel_id, latitude, longitude, minutes=0):
@@ -42,13 +46,15 @@ def _alert(center_latitude=12.0, center_longitude=78.0, until_minutes=30, from_m
         "severity": 5,
         "geometry": {
             "type": "Polygon",
-            "coordinates": [[
-                [center_longitude - size, center_latitude - size],
-                [center_longitude + size, center_latitude - size],
-                [center_longitude + size, center_latitude + size],
-                [center_longitude - size, center_latitude + size],
-                [center_longitude - size, center_latitude - size],
-            ]],
+            "coordinates": [
+                [
+                    [center_longitude - size, center_latitude - size],
+                    [center_longitude + size, center_latitude - size],
+                    [center_longitude + size, center_latitude + size],
+                    [center_longitude - size, center_latitude + size],
+                    [center_longitude - size, center_latitude - size],
+                ]
+            ],
         },
     }
 
@@ -74,9 +80,10 @@ def test_polygon_and_multipolygon_coverage_include_expected_cells():
     assert point_cell in polygon_to_cells(polygon, 7)
     multipolygon = {
         "type": "MultiPolygon",
-        "coordinates": [polygon["coordinates"], [
-            [[80, 14], [80.1, 14], [80.1, 14.1], [80, 14.1], [80, 14]]
-        ]],
+        "coordinates": [
+            polygon["coordinates"],
+            [[[80, 14], [80.1, 14], [80.1, 14.1], [80, 14.1], [80, 14]]],
+        ],
     }
     assert point_cell in polygon_to_cells(multipolygon, 7)
 
@@ -251,9 +258,7 @@ def test_local_runner_reads_and_writes_jsonl(tmp_path):
     (input_dir / "vessel-telemetry.jsonl").write_text(
         json.dumps(_telemetry("vessel", 12, 78)) + "\n", encoding="utf-8"
     )
-    (input_dir / "weather-alerts.jsonl").write_text(
-        json.dumps(_alert()) + "\n", encoding="utf-8"
-    )
+    (input_dir / "weather-alerts.jsonl").write_text(json.dumps(_alert()) + "\n", encoding="utf-8")
     result = run_streaming_job({"input_dir": input_dir, "output_dir": output_dir})
     assert result["risk_events"][0]["risk_alert"] is True
     assert (output_dir / "risk-events.jsonl").exists()
@@ -320,15 +325,11 @@ def test_overlapping_alerts_both_reported_sorted():
     second_alert = _alert()
     second_alert["alert_id"] = "alert-2"
     second_alert["event_id"] = "alert-event-2"
-    results = process_events(
-        [_telemetry("vessel", 12, 78)], [second_alert, first_alert]
-    )
+    results = process_events([_telemetry("vessel", 12, 78)], [second_alert, first_alert])
 
     event = results["risk_events"][0]
     assert event["risk_alert"] is True
-    assert [hazard["alert_id"] for hazard in event["matching_hazards"]] == [
-        "alert-1", "alert-2"
-    ]
+    assert [hazard["alert_id"] for hazard in event["matching_hazards"]] == ["alert-1", "alert-2"]
 
 
 def test_multipolygon_alert_matches_second_polygon():
@@ -378,18 +379,29 @@ def test_unknown_coverage_mode_rejected():
 
 
 def test_five_minute_windows():
-    result = process_events([
-        _telemetry("v1", 12, 78, 4), _telemetry("v2", 12, 78, 5),
-    ], [], window_minutes=5)
+    result = process_events(
+        [
+            _telemetry("v1", 12, 78, 4),
+            _telemetry("v2", 12, 78, 5),
+        ],
+        [],
+        window_minutes=5,
+    )
     assert [(r["window_start"], r["window_end"]) for r in result["density_metrics"]] == [
-        (_timestamp(0), _timestamp(5)), (_timestamp(5), _timestamp(10)),
+        (_timestamp(0), _timestamp(5)),
+        (_timestamp(5), _timestamp(10)),
     ]
 
 
 def test_sixty_minute_window_groups_hour():
-    result = process_events([
-        _telemetry("v1", 12, 78, 5), _telemetry("v2", 12, 78, 55),
-    ], [], window_minutes=60)
+    result = process_events(
+        [
+            _telemetry("v1", 12, 78, 5),
+            _telemetry("v2", 12, 78, 55),
+        ],
+        [],
+        window_minutes=60,
+    )
     assert len(result["density_metrics"]) == 1
     assert result["density_metrics"][0]["unique_vessel_count"] == 2
     assert result["density_metrics"][0]["window_start"] == _timestamp(0)
@@ -403,16 +415,24 @@ def test_processing_rejects_invalid_window(minutes):
 
 
 def test_multi_hour_window_uses_epoch_floor():
-    metric = process_events([_telemetry("v", 12, 78, 95)], [], window_minutes=120)["density_metrics"][0]
+    metric = process_events([_telemetry("v", 12, 78, 95)], [], window_minutes=120)[
+        "density_metrics"
+    ][0]
     assert metric["window_start"] == _timestamp(0)
     assert metric["window_end"] == _timestamp(120)
 
 
 @pytest.mark.parametrize("strict", [False, True])
 def test_late_event_quarantined(strict):
-    result = process_events([
-        _telemetry("new", 12, 78, 30), _telemetry("old", 12, 78, 0),
-    ], [], allowed_lateness_minutes=10, strict=strict)
+    result = process_events(
+        [
+            _telemetry("new", 12, 78, 30),
+            _telemetry("old", 12, 78, 0),
+        ],
+        [],
+        allowed_lateness_minutes=10,
+        strict=strict,
+    )
     assert [e["vessel_id"] for e in result["risk_events"]] == ["new"]
     assert result["quarantine"][0]["reason"] == "late_event"
     assert result["stats"]["late_dropped"] == 1
@@ -424,9 +444,14 @@ def test_late_event_quarantined(strict):
 
 
 def test_out_of_order_within_lateness_processed():
-    result = process_events([
-        _telemetry("new", 12, 78, 30), _telemetry("old", 12, 78, 0),
-    ], [], allowed_lateness_minutes=60)
+    result = process_events(
+        [
+            _telemetry("new", 12, 78, 30),
+            _telemetry("old", 12, 78, 0),
+        ],
+        [],
+        allowed_lateness_minutes=60,
+    )
     assert [e["event_time"] for e in result["risk_events"]] == [_timestamp(0), _timestamp(30)]
     assert result["stats"]["late_dropped"] == 0
     assert result["stats"]["watermark"] == _timestamp(-30)
@@ -435,9 +460,14 @@ def test_out_of_order_within_lateness_processed():
 
 @pytest.mark.parametrize("lateness", [0, 10])
 def test_event_exactly_at_watermark_is_accepted(lateness):
-    result = process_events([
-        _telemetry("first", 12, 78, 30), _telemetry("boundary", 12, 78, 30-lateness),
-    ], [], allowed_lateness_minutes=lateness)
+    result = process_events(
+        [
+            _telemetry("first", 12, 78, 30),
+            _telemetry("boundary", 12, 78, 30 - lateness),
+        ],
+        [],
+        allowed_lateness_minutes=lateness,
+    )
     assert len(result["risk_events"]) == 2
     assert result["stats"]["late_dropped"] == 0
 
@@ -460,10 +490,15 @@ def test_invalid_lateness_rejected(minutes):
 
 def test_duplicate_or_invalid_future_event_does_not_advance_watermark():
     first = _telemetry("first", 12, 78)
-    result = process_events([
-        first, dict(first, event_time=_timestamp(60)),
-        _telemetry("invalid", 100, 78, 60), _telemetry("next", 12, 78, 5),
-    ], [])
+    result = process_events(
+        [
+            first,
+            dict(first, event_time=_timestamp(60)),
+            _telemetry("invalid", 100, 78, 60),
+            _telemetry("next", 12, 78, 5),
+        ],
+        [],
+    )
     assert result["stats"]["watermark"] == _timestamp(-5)
     assert result["stats"]["duplicates_dropped"] == 1
     assert result["stats"]["late_dropped"] == 0
@@ -473,24 +508,39 @@ def test_duplicate_or_invalid_future_event_does_not_advance_watermark():
 def test_runner_writes_run_metadata(tmp_path):
     from georisk.config import GeoRiskConfig
 
-    settings = GeoRiskConfig.from_env({
-        "GEORISK_H3_COVERAGE_MODE": "center", "GEORISK_DENSITY_WINDOW_MINUTES": "5",
-        "GEORISK_ALLOWED_LATENESS_MINUTES": "0",
-    })
-    result = run_streaming_job({
-        "telemetry": [_telemetry("new", 12, 78, 30), _telemetry("old", 12, 78)],
-        "output_dir": tmp_path, "resolution": 8,
-        "coverage_mode": settings.coverage_mode,
-        "window_minutes": settings.density_window_minutes,
-        "allowed_lateness_minutes": settings.allowed_lateness_minutes,
-    })
+    settings = GeoRiskConfig.from_env(
+        {
+            "GEORISK_H3_COVERAGE_MODE": "center",
+            "GEORISK_DENSITY_WINDOW_MINUTES": "5",
+            "GEORISK_ALLOWED_LATENESS_MINUTES": "0",
+        }
+    )
+    result = run_streaming_job(
+        {
+            "telemetry": [_telemetry("new", 12, 78, 30), _telemetry("old", 12, 78)],
+            "output_dir": tmp_path,
+            "resolution": 8,
+            "coverage_mode": settings.coverage_mode,
+            "window_minutes": settings.density_window_minutes,
+            "allowed_lateness_minutes": settings.allowed_lateness_minutes,
+        }
+    )
     metadata = json.loads((tmp_path / "run-metadata.json").read_text(encoding="utf-8"))
     assert metadata == result["metadata"]
     assert set(metadata) == {
-        "processed_at", "latest_event_time", "watermark", "h3_resolution",
-        "coverage_mode", "window_minutes", "allowed_lateness_minutes", "counts", "simulated",
+        "processed_at",
+        "latest_event_time",
+        "watermark",
+        "h3_resolution",
+        "coverage_mode",
+        "window_minutes",
+        "allowed_lateness_minutes",
+        "counts",
+        "simulated",
     }
-    assert datetime.fromisoformat(metadata["processed_at"].replace("Z", "+00:00")).utcoffset() == timedelta(0)
+    assert datetime.fromisoformat(
+        metadata["processed_at"].replace("Z", "+00:00")
+    ).utcoffset() == timedelta(0)
     assert metadata["processed_at"].endswith("Z")
     assert metadata["simulated"] is True
     assert metadata["latest_event_time"] == metadata["watermark"] == _timestamp(30)

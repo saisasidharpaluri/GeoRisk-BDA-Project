@@ -18,9 +18,7 @@ def _validate_resolution(resolution: int) -> None:
     if not isinstance(resolution, int) or isinstance(resolution, bool):
         raise TypeError("resolution must be an integer")
     if not MIN_RESOLUTION <= resolution <= MAX_RESOLUTION:
-        raise ValueError(
-            f"resolution must be between {MIN_RESOLUTION} and {MAX_RESOLUTION}"
-        )
+        raise ValueError(f"resolution must be between {MIN_RESOLUTION} and {MAX_RESOLUTION}")
 
 
 def point_to_cell(latitude: float, longitude: float, resolution: int) -> str:
@@ -44,7 +42,8 @@ def _validate_geometry(geojson_geometry: Mapping[str, Any]) -> None:
 
 
 def polygon_to_cells(
-    geojson_geometry: dict, resolution: int,
+    geojson_geometry: dict,
+    resolution: int,
     coverage_mode: str = DEFAULT_COVERAGE_MODE,
 ) -> set[str]:
     """Return candidate cells using center containment or polygon overlap."""
@@ -55,8 +54,10 @@ def polygon_to_cells(
     try:
         if coverage_mode == "center":
             return set(h3.geo_to_cells(geojson_geometry, resolution))
-        return set(h3.h3shape_to_cells_experimental(
-            h3.geo_to_h3shape(geojson_geometry), resolution, contain="overlap"
-        ))
+        return set(
+            h3.h3shape_to_cells_experimental(
+                h3.geo_to_h3shape(geojson_geometry), resolution, contain="overlap"
+            )
+        )
     except (TypeError, ValueError, h3.H3BaseException) as exc:
         raise ValueError(f"invalid GeoJSON geometry: {exc}") from exc

@@ -21,8 +21,10 @@ DEMO_BBOX = {"lat_min": 12.5, "lat_max": 14.0, "lon_min": 80.5, "lon_max": 82.2}
 def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Return great-circle distance in nautical miles."""
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    a = (math.sin((phi2 - phi1) / 2) ** 2
-         + math.cos(phi1) * math.cos(phi2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    a = (
+        math.sin((phi2 - phi1) / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    )
     return 2 * 3440.065 * math.asin(math.sqrt(min(1.0, max(0.0, a))))
 
 

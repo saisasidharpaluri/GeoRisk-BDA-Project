@@ -63,8 +63,11 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
     scenarios = report.get("scenarios", [])
     for name in expected_scenario_names(config.get("coverage_mode", "overlap")):
         matches = [item for item in scenarios if item.get("name") == name]
-        check(f"scenario_{name}", len(matches) == 1 and matches[0].get("passed") is True,
-              matches[0].get("detail", "") if matches else "required scenario is missing")
+        check(
+            f"scenario_{name}",
+            len(matches) == 1 and matches[0].get("passed") is True,
+            matches[0].get("detail", "") if matches else "required scenario is missing",
+        )
     check(
         "dashboard_labels",
         dashboard.get("simulated") is True
@@ -88,7 +91,10 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
         "artifact_integrity",
         bool(artifacts) and not mismatched,
         "mismatched or missing artifacts: " + ", ".join(mismatched)
-        if mismatched else "all artifact hashes match" if artifacts else "artifact manifest is missing or empty",
+        if mismatched
+        else "all artifact hashes match"
+        if artifacts
+        else "artifact manifest is missing or empty",
     )
 
     check("run_status", report.get("status") == "success", "pipeline status is success")
@@ -100,13 +106,16 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
     )
     check(
         "risk_and_density_outputs",
-        processing.get("risk_event_count", 0) > 0
-        and processing.get("density_metric_count", 0) > 0,
+        processing.get("risk_event_count", 0) > 0 and processing.get("density_metric_count", 0) > 0,
         "risk and density outputs are non-empty",
     )
     lake_paths = lake.get("paths", {})
     required_datasets = {
-        "vessel_telemetry", "weather_alerts", "risk_events", "density_metrics", "delay_estimates",
+        "vessel_telemetry",
+        "weather_alerts",
+        "risk_events",
+        "density_metrics",
+        "delay_estimates",
     }
     check(
         "parquet_outputs",
@@ -141,8 +150,7 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
     )
     check(
         "dashboard_freshness",
-        dashboard.get("has_data") is True
-        and bool(dashboard.get("latest_event_time")),
+        dashboard.get("has_data") is True and bool(dashboard.get("latest_event_time")),
         "dashboard has data and a latest event timestamp",
     )
     passed = all(item["passed"] for item in checks)
@@ -177,7 +185,10 @@ def validate_cli() -> None:
     configure_logging()
     report_path = os.environ.get("GEORISK_REPORT_PATH", "output/reports/phase6-run.json")
     result = validate_report(report_path)
-    logger.info("Report validated", extra={"georisk": {"report_path": report_path, "passed": result["passed"]}})
+    logger.info(
+        "Report validated",
+        extra={"georisk": {"report_path": report_path, "passed": result["passed"]}},
+    )
     print(json.dumps(result, indent=2, sort_keys=True))
     if not result["passed"]:
         raise SystemExit(1)

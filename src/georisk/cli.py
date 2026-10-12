@@ -26,7 +26,11 @@ def _spark_available() -> bool:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="georisk", description=__doc__)
-    parser.add_argument("--env-file", default=argparse.SUPPRESS, help="dotenv file (default: GEORISK_ENV_FILE or .env)")
+    parser.add_argument(
+        "--env-file",
+        default=argparse.SUPPRESS,
+        help="dotenv file (default: GEORISK_ENV_FILE or .env)",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     descriptions = {
         "generate": "Generate deterministic scenario JSONL files",
@@ -44,8 +48,14 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--env-file", default=argparse.SUPPRESS)
 
         def option(flag: str, env: str, *, aliases: tuple[str, ...] = (), **kwargs: Any) -> None:
-            command.add_argument(flag, *aliases, dest=env, default=argparse.SUPPRESS,
-                                 help=f"overrides {env}", **kwargs)
+            command.add_argument(
+                flag,
+                *aliases,
+                dest=env,
+                default=argparse.SUPPRESS,
+                help=f"overrides {env}",
+                **kwargs,
+            )
 
         option("--log-level", "GEORISK_LOG_LEVEL")
         if name in {"generate", "run", "compare-resolutions"}:
@@ -66,7 +76,11 @@ def _parser() -> argparse.ArgumentParser:
             option("--window-minutes", "GEORISK_DENSITY_WINDOW_MINUTES", type=int)
             option("--allowed-lateness-minutes", "GEORISK_ALLOWED_LATENESS_MINUTES", type=int)
         if name in {"process", "run"}:
-            option("--strict-validation", "GEORISK_STRICT_VALIDATION", action=argparse.BooleanOptionalAction)
+            option(
+                "--strict-validation",
+                "GEORISK_STRICT_VALIDATION",
+                action=argparse.BooleanOptionalAction,
+            )
         if name in {"run", "validate", "compare-resolutions"}:
             option("--report-path", "GEORISK_REPORT_PATH", aliases=("--report",))
         if name in {"run", "dashboard"}:
@@ -77,7 +91,11 @@ def _parser() -> argparse.ArgumentParser:
             option("--delay-model", "GEORISK_DELAY_MODEL", choices=("linear", "gbt"))
             option("--evaluation-fraction", "GEORISK_EVALUATION_FRACTION", type=float)
             option("--delay-noise-std-hours", "GEORISK_DELAY_NOISE_STD_HOURS", type=float)
-            option("--acceptance-required", "GEORISK_ACCEPTANCE_REQUIRED", action=argparse.BooleanOptionalAction)
+            option(
+                "--acceptance-required",
+                "GEORISK_ACCEPTANCE_REQUIRED",
+                action=argparse.BooleanOptionalAction,
+            )
         if name in {"replay", "spark-stream"}:
             option("--stream-dir", "GEORISK_STREAM_DIR")
         if name == "replay":
@@ -85,21 +103,30 @@ def _parser() -> argparse.ArgumentParser:
         if name == "spark-stream":
             option("--output-dir", "GEORISK_SPARK_OUTPUT_DIR")
             option("--checkpoint-dir", "GEORISK_SPARK_CHECKPOINT_DIR")
-            command.add_argument("--watch", action="store_true", help="keep watching for batches instead of draining available input")
+            command.add_argument(
+                "--watch",
+                action="store_true",
+                help="keep watching for batches instead of draining available input",
+            )
     return parser
 
 
 def _scenario(settings: GeoRiskConfig) -> dict[str, list[dict[str, Any]]]:
     from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 
-    return generate_scenario(ScenarioConfig(
-        seed=settings.seed, vessel_count=settings.vessel_count,
-        duration_minutes=settings.scenario_duration_minutes,
-        interval_seconds=settings.telemetry_interval_seconds,
-    ))
+    return generate_scenario(
+        ScenarioConfig(
+            seed=settings.seed,
+            vessel_count=settings.vessel_count,
+            duration_minutes=settings.scenario_duration_minutes,
+            interval_seconds=settings.telemetry_interval_seconds,
+        )
+    )
 
 
-def _dispatch(args: argparse.Namespace, settings: GeoRiskConfig, environment: dict[str, str]) -> int:
+def _dispatch(
+    args: argparse.Namespace, settings: GeoRiskConfig, environment: dict[str, str]
+) -> int:
     command = args.command
     status = 0
     result: Any
@@ -112,22 +139,35 @@ def _dispatch(args: argparse.Namespace, settings: GeoRiskConfig, environment: di
         from georisk.ingestion.generator import replay_events
 
         events = {}
-        for key, filename in (("telemetry", "vessel-telemetry.jsonl"), ("weather_alerts", "weather-alerts.jsonl")):
+        for key, filename in (
+            ("telemetry", "vessel-telemetry.jsonl"),
+            ("weather_alerts", "weather-alerts.jsonl"),
+        ):
             path = settings.input_dir / filename
-            events[key] = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            events[key] = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         with FileStreamPublisher(settings.stream_dir) as publisher:
-            result = asdict(replay_events(events, publisher, speed_factor=settings.replay_speed_factor))
+            result = asdict(
+                replay_events(events, publisher, speed_factor=settings.replay_speed_factor)
+            )
         status = int(result["rejected"] > 0)
     elif command == "process":
         from georisk.processing.stream_job import run_streaming_job
 
-        result = run_streaming_job(dict(
-            input_dir=settings.input_dir, output_dir=settings.processed_dir,
-            resolution=settings.resolution, coverage_mode=settings.coverage_mode,
-            window_minutes=settings.density_window_minutes,
-            allowed_lateness_minutes=settings.allowed_lateness_minutes,
-            strict=settings.strict_validation,
-        ))
+        result = run_streaming_job(
+            dict(
+                input_dir=settings.input_dir,
+                output_dir=settings.processed_dir,
+                resolution=settings.resolution,
+                coverage_mode=settings.coverage_mode,
+                window_minutes=settings.density_window_minutes,
+                allowed_lateness_minutes=settings.allowed_lateness_minutes,
+                strict=settings.strict_validation,
+            )
+        )
     elif command == "run":
         from georisk.pipeline import run_end_to_end
 
@@ -142,10 +182,14 @@ def _dispatch(args: argparse.Namespace, settings: GeoRiskConfig, environment: di
         from georisk.analysis.resolution_comparison import compare_resolutions
 
         events = _scenario(settings)
-        result = compare_resolutions(events["telemetry"], events["weather_alerts"], coverage_mode=settings.coverage_mode)
+        result = compare_resolutions(
+            events["telemetry"], events["weather_alerts"], coverage_mode=settings.coverage_mode
+        )
         destination = settings.report_path.parent / "resolution-comparison.json"
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        destination.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     elif command == "dashboard":
         from georisk.route_dashboard import dashboard
 
@@ -153,7 +197,8 @@ def _dispatch(args: argparse.Namespace, settings: GeoRiskConfig, environment: di
         environment.setdefault("STREAMLIT_THEME_BASE", str(theme))
         return subprocess.run(
             [sys.executable, "-m", "streamlit", "run", str(Path(dashboard.__file__).resolve())],
-            env=environment, check=False,
+            env=environment,
+            check=False,
         ).returncode
     else:
         from georisk.processing.spark_stream_job import run_stream
@@ -162,8 +207,12 @@ def _dispatch(args: argparse.Namespace, settings: GeoRiskConfig, environment: di
         spark = get_spark("georisk-stream")
         try:
             query = run_stream(
-                spark, settings.stream_dir, settings.spark_output_dir, settings.spark_checkpoint_dir,
-                resolution=settings.resolution, coverage_mode=settings.coverage_mode,
+                spark,
+                settings.stream_dir,
+                settings.spark_output_dir,
+                settings.spark_checkpoint_dir,
+                resolution=settings.resolution,
+                coverage_mode=settings.coverage_mode,
                 window_minutes=settings.density_window_minutes,
                 allowed_lateness_minutes=settings.allowed_lateness_minutes,
                 available_now=not args.watch,
@@ -189,7 +238,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             load_env_file(env_file)
         environment = dict(os.environ)
         environment["GEORISK_ENV_FILE"] = str(env_file)
-        environment.update({key: str(value) for key, value in vars(args).items() if key.startswith("GEORISK_")})
+        environment.update(
+            {key: str(value) for key, value in vars(args).items() if key.startswith("GEORISK_")}
+        )
         settings = GeoRiskConfig.from_env(environment)
         configure_logging(settings.log_level)
         return _dispatch(args, settings, environment)

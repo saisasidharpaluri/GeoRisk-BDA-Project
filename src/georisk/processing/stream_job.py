@@ -11,8 +11,12 @@ from typing import Any, Iterable, Mapping
 
 from georisk.contracts import ContractValidationError, SCHEMA_VERSION, validate_event
 from georisk.processing.h3_index import (
-    COVERAGE_MODES, DEFAULT_COVERAGE_MODE, DEFAULT_RESOLUTION,
-    _validate_resolution, point_to_cell, polygon_to_cells,
+    COVERAGE_MODES,
+    DEFAULT_COVERAGE_MODE,
+    DEFAULT_RESOLUTION,
+    _validate_resolution,
+    point_to_cell,
+    polygon_to_cells,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,8 +80,10 @@ def process_events(
     if not isinstance(strict, bool):
         raise TypeError("strict must be a boolean")
     if (
-        not isinstance(window_minutes, int) or isinstance(window_minutes, bool)
-        or not 1 <= window_minutes <= 1440 or 1440 % window_minutes != 0
+        not isinstance(window_minutes, int)
+        or isinstance(window_minutes, bool)
+        or not 1 <= window_minutes <= 1440
+        or 1440 % window_minutes != 0
     ):
         raise ValueError("window_minutes must be 1..1440 and divide 1440")
     if (
@@ -90,8 +96,10 @@ def process_events(
     if coverage_mode not in COVERAGE_MODES:
         raise ValueError("coverage_mode must be center or overlap")
     settings = {
-        "h3_resolution": resolution, "coverage_mode": coverage_mode,
-        "window_minutes": window_minutes, "allowed_lateness_minutes": allowed_lateness_minutes,
+        "h3_resolution": resolution,
+        "coverage_mode": coverage_mode,
+        "window_minutes": window_minutes,
+        "allowed_lateness_minutes": allowed_lateness_minutes,
     }
     logger.info("Processing batch", extra={"georisk": settings})
     quarantine = []
@@ -121,7 +129,9 @@ def process_events(
     latest_alerts: dict[str, dict[str, Any]] = {}
     for alert in alert_records:
         previous = latest_alerts.get(alert["alert_id"])
-        if previous is None or _parse_utc(alert["event_time"]) >= _parse_utc(previous["event_time"]):
+        if previous is None or _parse_utc(alert["event_time"]) >= _parse_utc(
+            previous["event_time"]
+        ):
             latest_alerts[alert["alert_id"]] = alert
     stats["alert_revisions_superseded"] = len(alert_records) - len(latest_alerts)
 
@@ -142,7 +152,9 @@ def process_events(
         except (ContractValidationError, TypeError) as exc:
             if strict:
                 raise
-            quarantine.append(_quarantine_entry("vessel_telemetry", "contract_violation", event, exc))
+            quarantine.append(
+                _quarantine_entry("vessel_telemetry", "contract_violation", event, exc)
+            )
             continue
         if event["event_id"] in seen_event_ids:
             stats["duplicates_dropped"] += 1
@@ -151,10 +163,16 @@ def process_events(
         event_time = _parse_utc(event["event_time"])
         if max_event_time is not None and event_time < max_event_time - allowed_lateness:
             stats["late_dropped"] += 1
-            quarantine.append(_quarantine_entry(
-                "vessel_telemetry", "late_event", event,
-                ValueError(f"event_time precedes watermark {_timestamp(max_event_time - allowed_lateness)}"),
-            ))
+            quarantine.append(
+                _quarantine_entry(
+                    "vessel_telemetry",
+                    "late_event",
+                    event,
+                    ValueError(
+                        f"event_time precedes watermark {_timestamp(max_event_time - allowed_lateness)}"
+                    ),
+                )
+            )
             continue
         max_event_time = max(max_event_time, event_time) if max_event_time else event_time
         cell = point_to_cell(event["latitude"], event["longitude"], resolution)
@@ -176,7 +194,12 @@ def process_events(
         )
         window_start = _window_start(event_time, window_minutes)
         density_keys.add(
-            (window_start, window_start + timedelta(minutes=window_minutes), cell, event["vessel_id"])
+            (
+                window_start,
+                window_start + timedelta(minutes=window_minutes),
+                cell,
+                event["vessel_id"],
+            )
         )
 
     density_vessels: defaultdict[tuple[datetime, datetime, str], set[str]] = defaultdict(set)
@@ -197,23 +220,26 @@ def process_events(
         validate_event("risk_event", event)
     for metric in density_metrics:
         validate_event("density_metric", metric)
-    risk_events.sort(key=lambda event: (_parse_utc(event["event_time"]), event["vessel_id"], event["event_id"]))
+    risk_events.sort(
+        key=lambda event: (_parse_utc(event["event_time"]), event["vessel_id"], event["event_id"])
+    )
     stats["max_event_time"] = _timestamp(max_event_time) if max_event_time else None
     stats["watermark"] = _timestamp(max_event_time - allowed_lateness) if max_event_time else None
     stats["quarantined"] = len(quarantine)
     logger.info("Processing complete", extra={"georisk": {**settings, **stats}})
     return {
-        "risk_events": risk_events, "density_metrics": density_metrics,
-        "quarantine": quarantine, "stats": stats,
+        "risk_events": risk_events,
+        "density_metrics": density_metrics,
+        "quarantine": quarantine,
+        "stats": stats,
     }
 
 
-def _quarantine_entry(
-    contract: str, reason: str, record: Any, exc: Exception
-) -> dict[str, Any]:
+def _quarantine_entry(contract: str, reason: str, record: Any, exc: Exception) -> dict[str, Any]:
     """Preserve rejected input with validation details and a UTC timestamp."""
     entry = {
-        "contract": contract, "reason": reason,
+        "contract": contract,
+        "reason": reason,
         "errors": exc.errors if isinstance(exc, ContractValidationError) else [str(exc)],
         "record": dict(record) if isinstance(record, Mapping) else record,
         "quarantined_at": _timestamp(datetime.now(UTC)),
@@ -237,9 +263,11 @@ def _read_jsonl(
             except ValueError as exc:
                 if strict:
                     raise ValueError(f"invalid JSON object in {path}:{line_number}: {exc}") from exc
-                quarantine.append(_quarantine_entry(
-                    contract, "invalid_json", {"line": line_number, "raw": line[:1000]}, exc
-                ))
+                quarantine.append(
+                    _quarantine_entry(
+                        contract, "invalid_json", {"line": line_number, "raw": line[:1000]}, exc
+                    )
+                )
                 continue
             records.append(record)
     return records
@@ -280,7 +308,10 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
             directory / "weather-alerts.jsonl", "weather_alert", quarantine, strict=strict
         )
     results = process_events(
-        telemetry, alerts, resolution=resolution, strict=strict,
+        telemetry,
+        alerts,
+        resolution=resolution,
+        strict=strict,
         coverage_mode=config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
         window_minutes=config.get("window_minutes", WINDOW_MINUTES),
         allowed_lateness_minutes=config.get("allowed_lateness_minutes", 10),
@@ -311,11 +342,16 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
             json.dumps(results["metadata"], indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    logger.info("Processing run complete", extra={"georisk": {
-        **results["stats"],
-        "h3_resolution": resolution,
-        "coverage_mode": results["metadata"]["coverage_mode"],
-        "window_minutes": results["metadata"]["window_minutes"],
-        "allowed_lateness_minutes": results["metadata"]["allowed_lateness_minutes"],
-    }})
+    logger.info(
+        "Processing run complete",
+        extra={
+            "georisk": {
+                **results["stats"],
+                "h3_resolution": resolution,
+                "coverage_mode": results["metadata"]["coverage_mode"],
+                "window_minutes": results["metadata"]["window_minutes"],
+                "allowed_lateness_minutes": results["metadata"]["allowed_lateness_minutes"],
+            }
+        },
+    )
     return results

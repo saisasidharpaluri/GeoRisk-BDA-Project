@@ -54,9 +54,7 @@ def _polygon(center_latitude: float, center_longitude: float, size: float) -> di
     return {"type": "Polygon", "coordinates": coordinates}
 
 
-def _weather_alert(
-    rng: random.Random, index: int, start_time: datetime
-) -> Event:
+def _weather_alert(rng: random.Random, index: int, start_time: datetime) -> Event:
     center_latitude = DEMO_NODES["chokepoint"][0] + rng.uniform(-0.15, 0.15)
     center_longitude = DEMO_NODES["chokepoint"][1] + rng.uniform(-0.15, 0.15)
     valid_from = start_time - timedelta(minutes=5)
@@ -76,8 +74,13 @@ def _weather_alert(
 
 
 def _vessel_track(
-    rng: random.Random, vessel_index: int, points: int, interval_seconds: int,
-    start_time: datetime, *, position: tuple[float, float] | None = None,
+    rng: random.Random,
+    vessel_index: int,
+    points: int,
+    interval_seconds: int,
+    start_time: datetime,
+    *,
+    position: tuple[float, float] | None = None,
     speed_knots: float | None = None,
 ) -> list[Event]:
     """Move one vessel along a lane, carrying excess distance across waypoints."""
@@ -91,7 +94,7 @@ def _vessel_track(
         while distance > lengths[target_index - 1]:
             distance -= lengths[target_index - 1]
             target_index += 1
-        a, b = waypoints[target_index - 1:target_index + 1]
+        a, b = waypoints[target_index - 1 : target_index + 1]
         fraction = distance / lengths[target_index - 1]
         position = (a[0] + fraction * (b[0] - a[0]), a[1] + fraction * (b[1] - a[1]))
     latitude = position[0] + rng.uniform(-0.002, 0.002)
@@ -99,18 +102,23 @@ def _vessel_track(
     speed = rng.uniform(8.0, 22.0) if speed_knots is None else speed_knots
     records = []
     for point_index in range(points):
-        if target_index < len(waypoints) - 1 and haversine_nm(
-            latitude, longitude, *waypoints[target_index]
-        ) < 1:
+        if (
+            target_index < len(waypoints) - 1
+            and haversine_nm(latitude, longitude, *waypoints[target_index]) < 1
+        ):
             target_index += 1
         heading = initial_bearing_deg(latitude, longitude, *waypoints[target_index])
         event = {
             "schema_version": SCHEMA_VERSION,
             "event_id": f"telemetry-{vessel_index:05d}-{point_index:04d}",
-            "event_time": _utc_timestamp(start_time + timedelta(seconds=interval_seconds * point_index)),
+            "event_time": _utc_timestamp(
+                start_time + timedelta(seconds=interval_seconds * point_index)
+            ),
             "vessel_id": f"vessel-{vessel_index:05d}",
-            "latitude": round(latitude, 6), "longitude": round(longitude, 6),
-            "speed_knots": round(speed, 3), "heading_deg": round(heading, 3) % 360,
+            "latitude": round(latitude, 6),
+            "longitude": round(longitude, 6),
+            "speed_knots": round(speed, 3),
+            "heading_deg": round(heading, 3) % 360,
         }
         validate_event("vessel_telemetry", event)
         records.append(event)
@@ -167,9 +175,9 @@ def generate_events(
     telemetry: list[Event] = []
 
     for vessel_index in range(vessel_count):
-        telemetry.extend(_vessel_track(
-            rng, vessel_index, telemetry_points, interval_seconds, start_time
-        ))
+        telemetry.extend(
+            _vessel_track(rng, vessel_index, telemetry_points, interval_seconds, start_time)
+        )
 
     for alert in alerts:
         validate_event("weather_alert", alert)
@@ -195,13 +203,15 @@ def iter_events(
 
 
 def iter_events_by_time(
-    events: Mapping[str, Iterable[Event]], validate: bool = True,
+    events: Mapping[str, Iterable[Event]],
+    validate: bool = True,
 ) -> Iterable[tuple[str, Event]]:
     """Yield by UTC time, alerts first at ties, then event ID.
 
     Invalid timestamps sort last when validation is disabled, allowing replay
     to quarantine malformed records without disrupting valid event order.
     """
+
     def key(item: tuple[str, Event]) -> tuple[datetime, int, str]:
         stream, event = item
         timestamp = datetime.max.replace(tzinfo=UTC)
@@ -241,8 +251,10 @@ def replay_events(
 
     generated = published = rejected = 0
     if speed_factor is not None and (
-        not isinstance(speed_factor, (int, float)) or isinstance(speed_factor, bool)
-        or not math.isfinite(speed_factor) or speed_factor < 0
+        not isinstance(speed_factor, (int, float))
+        or isinstance(speed_factor, bool)
+        or not math.isfinite(speed_factor)
+        or speed_factor < 0
     ):
         raise ValueError("speed_factor must be a non-negative finite number or None")
     previous_time: datetime | None = None
@@ -251,9 +263,7 @@ def replay_events(
         if max_events is not None and generated >= max_events:
             break
         generated += 1
-        stream_name = (
-            "weather-alerts" if stream_key == "weather_alerts" else "vessel-telemetry"
-        )
+        stream_name = "weather-alerts" if stream_key == "weather_alerts" else "vessel-telemetry"
         contract = "weather_alert" if stream_key == "weather_alerts" else "vessel_telemetry"
         try:
             validate_event(contract, event)
@@ -289,7 +299,9 @@ def write_jsonl(events: Mapping[str, Iterable[Event]], output_dir: str | Path) -
     destination.mkdir(parents=True, exist_ok=True)
     with ExitStack() as stack:
         handles = {
-            stream: stack.enter_context((destination / f"{stream}.jsonl").open("w", encoding="utf-8"))
+            stream: stack.enter_context(
+                (destination / f"{stream}.jsonl").open("w", encoding="utf-8")
+            )
             for stream in ("weather-alerts", "vessel-telemetry", "quarantine")
         }
 
@@ -297,10 +309,15 @@ def write_jsonl(events: Mapping[str, Iterable[Event]], output_dir: str | Path) -
             handles[stream].write(json.dumps(event, sort_keys=True) + "\n")
 
         def quarantine(stream: str, event: Event, exc: Exception) -> None:
-            publish("quarantine", {
-                "stream": stream,
-                "errors": exc.errors if isinstance(exc, ContractValidationError) else [str(exc)],
-                "record": event,
-            })
+            publish(
+                "quarantine",
+                {
+                    "stream": stream,
+                    "errors": exc.errors
+                    if isinstance(exc, ContractValidationError)
+                    else [str(exc)],
+                    "record": event,
+                },
+            )
 
         return replay_events(events, publish, on_invalid=quarantine)

@@ -46,21 +46,27 @@ def test_generation_requires_utc_start_time():
         generate_events(
             1,
             1,
-            start_time=datetime(2026, 1, 1, tzinfo=timezone.utc).astimezone(
-                timezone.utc
-            ).replace(tzinfo=None),
+            start_time=datetime(2026, 1, 1, tzinfo=timezone.utc)
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None),
         )
 
 
 def test_replay_is_bounded_and_uses_expected_streams():
     events = generate_events(4, 2)
     published = []
-    stats = replay_events(events, lambda stream, event: published.append((stream, event)), max_events=3)
+    stats = replay_events(
+        events, lambda stream, event: published.append((stream, event)), max_events=3
+    )
 
     assert stats.generated == 3
     assert stats.published == 3
     assert stats.rejected == 0
-    assert [stream for stream, _ in published] == ["weather-alerts", "weather-alerts", "vessel-telemetry"]
+    assert [stream for stream, _ in published] == [
+        "weather-alerts",
+        "weather-alerts",
+        "vessel-telemetry",
+    ]
 
 
 def test_replay_surfaces_publish_failure():
@@ -86,16 +92,21 @@ def test_jsonl_sink_writes_valid_separate_stream_files(tmp_path):
     assert json.loads(telemetry_lines[0])["vessel_id"] == "vessel-00000"
 
 
-@pytest.mark.parametrize("stream_key,stream_name", [
-    ("telemetry", "vessel-telemetry"), ("weather_alerts", "weather-alerts"),
-])
+@pytest.mark.parametrize(
+    "stream_key,stream_name",
+    [
+        ("telemetry", "vessel-telemetry"),
+        ("weather_alerts", "weather-alerts"),
+    ],
+)
 def test_replay_counts_invalid_event_without_raising(stream_key, stream_name):
     events = generate_events(5, 1)
     invalid = dict(events[stream_key][0], event_time="invalid")
     events[stream_key].insert(0, invalid)
     published, rejected = [], []
     stats = replay_events(
-        events, lambda stream, event: published.append((stream, event)),
+        events,
+        lambda stream, event: published.append((stream, event)),
         on_invalid=lambda stream, event, exc: rejected.append((stream, event, exc)),
     )
     assert (stats.generated, stats.published, stats.rejected) == (6, 5, 1)
@@ -203,7 +214,9 @@ def test_heading_points_toward_waypoint():
 
 
 def test_motion_is_deterministic():
-    assert generate_events(19, 4, telemetry_points=24) == generate_events(19, 4, telemetry_points=24)
+    assert generate_events(19, 4, telemetry_points=24) == generate_events(
+        19, 4, telemetry_points=24
+    )
 
 
 def test_vessel_stops_at_end_of_lane():
@@ -261,7 +274,9 @@ def test_file_stream_publisher_writes_complete_files_only(tmp_path, monkeypatch)
     assert not list(tmp_path.rglob("*.tmp"))
     telemetry_files = sorted((tmp_path / "vessel-telemetry").glob("*.jsonl"))
     assert [path.name for path in telemetry_files] == ["part-000000.jsonl", "part-000001.jsonl"]
-    assert [json.loads(line) for path in telemetry_files for line in path.read_text().splitlines()] == events["telemetry"]
+    assert [
+        json.loads(line) for path in telemetry_files for line in path.read_text().splitlines()
+    ] == events["telemetry"]
     with file_stream.FileStreamPublisher(tmp_path, flush_every=2) as restarted:
         restarted("vessel-telemetry", events["telemetry"][0])
     assert (tmp_path / "vessel-telemetry" / "part-000002.jsonl").exists()
@@ -286,7 +301,9 @@ def test_file_stream_failed_rename_leaves_only_hidden_batch(tmp_path, monkeypatc
 def test_replay_settings_from_env(tmp_path):
     from georisk.config import GeoRiskConfig
 
-    config = GeoRiskConfig.from_env({"GEORISK_STREAM_DIR": str(tmp_path), "GEORISK_REPLAY_SPEED_FACTOR": "60"})
+    config = GeoRiskConfig.from_env(
+        {"GEORISK_STREAM_DIR": str(tmp_path), "GEORISK_REPLAY_SPEED_FACTOR": "60"}
+    )
     assert config.stream_dir == tmp_path
     assert config.replay_speed_factor == 60
     for value in ("-1", "nan", "inf"):
