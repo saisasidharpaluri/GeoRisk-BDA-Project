@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -42,6 +43,8 @@ class GeoRiskConfig:
     seed: int = 7
     vessel_count: int = 10
     telemetry_points: int = 3
+    stream_dir: Path = Path("output/stream")
+    replay_speed_factor: float = 0.0
     resolution: int = 7
     coverage_mode: str = "overlap"
     density_window_minutes: int = 15
@@ -68,6 +71,12 @@ class GeoRiskConfig:
     )
 
     def __post_init__(self) -> None:
+        if not isinstance(self.stream_dir, Path):
+            raise ValueError("GEORISK_STREAM_DIR must be a Path")
+        if (not isinstance(self.replay_speed_factor, (int, float))
+                or isinstance(self.replay_speed_factor, bool)
+                or not math.isfinite(self.replay_speed_factor) or self.replay_speed_factor < 0):
+            raise ValueError("GEORISK_REPLAY_SPEED_FACTOR must be a non-negative finite number")
         if self.log_level not in LOG_LEVELS:
             raise ValueError(f"GEORISK_LOG_LEVEL must be one of {LOG_LEVELS}")
         if (
@@ -112,6 +121,8 @@ class GeoRiskConfig:
             seed=_integer(source, "GEORISK_SEED", 7),
             vessel_count=_integer(source, "GEORISK_VESSEL_COUNT", 10),
             telemetry_points=_integer(source, "GEORISK_TELEMETRY_POINTS", 3),
+            stream_dir=Path(source.get("GEORISK_STREAM_DIR", "output/stream")),
+            replay_speed_factor=_float(source, "GEORISK_REPLAY_SPEED_FACTOR", 0.0),
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),
             coverage_mode=source.get("GEORISK_H3_COVERAGE_MODE", "overlap"),
             density_window_minutes=_integer(source, "GEORISK_DENSITY_WINDOW_MINUTES", 15),

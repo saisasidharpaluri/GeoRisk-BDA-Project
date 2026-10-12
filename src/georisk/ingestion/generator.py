@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import time
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -224,6 +225,8 @@ def replay_events(
     *,
     max_events: int | None = None,
     on_invalid: Callable[[str, Event, Exception], Any] | None = None,
+    speed_factor: float | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> ReplayStats:
     """Publish at most ``max_events`` valid events and count failures.
 
@@ -237,6 +240,12 @@ def replay_events(
         raise ValueError("max_events must be a non-negative integer or None")
 
     generated = published = rejected = 0
+    if speed_factor is not None and (
+        not isinstance(speed_factor, (int, float)) or isinstance(speed_factor, bool)
+        or not math.isfinite(speed_factor) or speed_factor < 0
+    ):
+        raise ValueError("speed_factor must be a non-negative finite number or None")
+    previous_time: datetime | None = None
     first_error: Exception | None = None
     for stream_key, event in iter_events_by_time(events, validate=False):
         if max_events is not None and generated >= max_events:
@@ -253,6 +262,12 @@ def replay_events(
             if on_invalid is not None:
                 on_invalid(stream_name, event, exc)
             continue
+        event_time = datetime.fromisoformat(event["event_time"].replace("Z", "+00:00"))
+        if speed_factor and previous_time is not None:
+            delay = min(5.0, (event_time - previous_time).total_seconds() / speed_factor)
+            if delay > 0:
+                sleep(delay)
+        previous_time = event_time
         try:
             publish(stream_name, event)
         except Exception as exc:

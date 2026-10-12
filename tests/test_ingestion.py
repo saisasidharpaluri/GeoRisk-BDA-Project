@@ -214,3 +214,81 @@ def test_vessel_stops_at_end_of_lane():
     assert (track[-1]["latitude"], track[-1]["longitude"]) == DEMO_NODES["port_b"]
     assert track[-2]["latitude"] == track[-1]["latitude"]
     assert track[-2]["longitude"] == track[-1]["longitude"]
+
+
+def test_replay_pacing_uses_injected_sleep():
+    events = generate_events(7, 1)
+    events["weather_alerts"] = []
+    sleeps = []
+    replay_events(events, lambda *_: None, speed_factor=60, sleep=sleeps.append)
+    assert sleeps == [5.0, 5.0]
+    sleeps.clear()
+    replay_events(events, lambda *_: None, speed_factor=120, sleep=sleeps.append)
+    assert sleeps == [2.5, 2.5]
+    sleeps.clear()
+    replay_events(events, lambda *_: None, speed_factor=0, sleep=sleeps.append)
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("speed", [-1, float("nan"), float("inf"), True])
+def test_replay_rejects_invalid_speed(speed):
+    with pytest.raises(ValueError, match="speed_factor"):
+        replay_events(generate_events(7, 1), lambda *_: None, speed_factor=speed)
+
+
+def test_file_stream_publisher_writes_complete_files_only(tmp_path, monkeypatch):
+    from georisk.ingestion import file_stream
+
+    events = generate_events(7, 1)
+    original_replace = file_stream.os.replace
+    replacements = []
+
+    def observe_replace(source, destination):
+        assert source.name.startswith(".part-")
+        assert source.suffix == ".tmp"
+        assert not destination.exists()
+        records = [json.loads(line) for line in source.read_text().splitlines()]
+        assert 1 <= len(records) <= 2
+        replacements.append(destination)
+        original_replace(source, destination)
+
+    monkeypatch.setattr(file_stream.os, "replace", observe_replace)
+    with file_stream.FileStreamPublisher(tmp_path, flush_every=2) as publisher:
+        stats = replay_events(events, publisher)
+        assert len(list((tmp_path / "vessel-telemetry").glob("*.jsonl"))) == 1
+    assert stats.published == 5
+    assert len(replacements) == 3
+    assert not list(tmp_path.rglob("*.tmp"))
+    telemetry_files = sorted((tmp_path / "vessel-telemetry").glob("*.jsonl"))
+    assert [path.name for path in telemetry_files] == ["part-000000.jsonl", "part-000001.jsonl"]
+    assert [json.loads(line) for path in telemetry_files for line in path.read_text().splitlines()] == events["telemetry"]
+    with file_stream.FileStreamPublisher(tmp_path, flush_every=2) as restarted:
+        restarted("vessel-telemetry", events["telemetry"][0])
+    assert (tmp_path / "vessel-telemetry" / "part-000002.jsonl").exists()
+    with pytest.raises(ValueError, match="closed"):
+        publisher("vessel-telemetry", events["telemetry"][0])
+
+
+def test_file_stream_failed_rename_leaves_only_hidden_batch(tmp_path, monkeypatch):
+    from georisk.ingestion import file_stream
+
+    def fail(*_):
+        raise OSError("rename failed")
+
+    monkeypatch.setattr(file_stream.os, "replace", fail)
+    publisher = file_stream.FileStreamPublisher(tmp_path, flush_every=1)
+    with pytest.raises(OSError, match="rename failed"):
+        publisher("vessel-telemetry", generate_events(7, 1)["telemetry"][0])
+    assert not list(tmp_path.rglob("*.jsonl"))
+    assert len(list(tmp_path.rglob(".part-*.tmp"))) == 1
+
+
+def test_replay_settings_from_env(tmp_path):
+    from georisk.config import GeoRiskConfig
+
+    config = GeoRiskConfig.from_env({"GEORISK_STREAM_DIR": str(tmp_path), "GEORISK_REPLAY_SPEED_FACTOR": "60"})
+    assert config.stream_dir == tmp_path
+    assert config.replay_speed_factor == 60
+    for value in ("-1", "nan", "inf"):
+        with pytest.raises(ValueError, match="GEORISK_REPLAY_SPEED_FACTOR"):
+            GeoRiskConfig.from_env({"GEORISK_REPLAY_SPEED_FACTOR": value})

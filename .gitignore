@@ -12,5 +12,6 @@ output/data/
 output/processed/
 output/lake/
 output/reports/
+output/stream/
 *.log
 *.docx
