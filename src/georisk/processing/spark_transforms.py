@@ -13,7 +13,10 @@ from pyspark.sql import types as T
 
 from georisk.contracts import validate_event
 from georisk.processing.h3_index import COVERAGE_MODES, _validate_resolution, polygon_to_cells
-from georisk.processing.stream_job import _parse_utc
+from georisk.processing.stream_job import alert_revisions
+
+# Java-regex form of the strict RFC 3339 UTC profile in ``georisk.contracts``.
+UTC_TIMESTAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]00:00)$"
 
 TELEMETRY_SCHEMA = T.StructType(
     [
@@ -73,7 +76,8 @@ def split_valid(df: DataFrame) -> tuple[DataFrame, DataFrame]:
             F.length("event_id") > 0,
             F.length("vessel_id") > 0,
             F.col("event_ts").isNotNull(),
-            F.col("event_time").rlike(r"(?:Z|[+-]00:00)$"),
+            F.col("event_time").rlike(UTC_TIMESTAMP_PATTERN),
+            *[~F.isnan(name) for name in ("latitude", "longitude", "speed_knots", "heading_deg")],
             F.col("latitude").between(-90, 90),
             F.col("longitude").between(-180, 180),
             F.col("speed_knots").between(0, 60),
@@ -121,35 +125,38 @@ def hazard_cells_df(
     resolution: int,
     coverage_mode: str,
 ) -> DataFrame:
-    """Expand the latest valid revision of each driver-side alert into H3 cells."""
+    """Expand every alert revision into H3 cells with its as-of interval.
+
+    ``alerts`` must be in arrival order and have already passed geometry
+    checks. Each row carries the event-time interval in which its revision is
+    current (``effective_*``; null means unbounded), matching the local
+    processor's :func:`~georisk.processing.stream_job.alert_revisions`.
+    """
     _validate_resolution(resolution)
     if coverage_mode not in COVERAGE_MODES:
         raise ValueError("coverage_mode must be center or overlap")
-    latest: dict[str, dict[str, Any]] = {}
     for alert in alerts:
         validate_event("weather_alert", alert)
-        previous = latest.get(alert["alert_id"])
-        if previous is None or _parse_utc(alert["event_time"]) >= _parse_utc(
-            previous["event_time"]
-        ):
-            latest[alert["alert_id"]] = alert
     schema = (
         "h3_index string, alert_id string, hazard_type string, severity int, "
-        "valid_from string, valid_until string, valid_from_ts timestamp, valid_until_ts timestamp"
+        "valid_from string, valid_until string, valid_from_ts timestamp, valid_until_ts timestamp, "
+        "effective_from_ts timestamp, effective_until_ts timestamp"
     )
     rows = [
         (
             cell,
-            alert["alert_id"],
-            alert["hazard_type"],
-            alert["severity"],
-            alert["valid_from"],
-            alert["valid_until"],
-            _parse_utc(alert["valid_from"]),
-            _parse_utc(alert["valid_until"]),
+            revision.alert["alert_id"],
+            revision.alert["hazard_type"],
+            revision.alert["severity"],
+            revision.alert["valid_from"],
+            revision.alert["valid_until"],
+            revision.valid_from,
+            revision.valid_until,
+            revision.effective_from,
+            revision.effective_until,
         )
-        for alert in latest.values()
-        for cell in sorted(polygon_to_cells(alert["geometry"], resolution, coverage_mode))
+        for revision in alert_revisions(alerts)
+        for cell in sorted(polygon_to_cells(revision.alert["geometry"], resolution, coverage_mode))
     ]
     return spark.createDataFrame(rows, schema)
 
@@ -170,6 +177,14 @@ def match_risk(
             (F.col("t.h3_index") == F.col("h.h3_index"))
             & (F.col("h.valid_from_ts") <= F.col("t.event_ts"))
             & (F.col("t.event_ts") < F.col("h.valid_until_ts"))
+            & (
+                F.col("h.effective_from_ts").isNull()
+                | (F.col("h.effective_from_ts") <= F.col("t.event_ts"))
+            )
+            & (
+                F.col("h.effective_until_ts").isNull()
+                | (F.col("t.event_ts") < F.col("h.effective_until_ts"))
+            )
         ),
         "left",
     )

@@ -7,6 +7,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
+from georisk.contracts import parse_utc_timestamp
+
 FEATURES = (
     "baseline_hours",
     "density",
@@ -50,7 +52,7 @@ def _time_key(value: Any) -> datetime | str:
     if isinstance(value, datetime):
         return value
     if isinstance(value, str):
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_utc_timestamp(value)
     raise ValueError("event_time must be a datetime or ISO timestamp")
 
 

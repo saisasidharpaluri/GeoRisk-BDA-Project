@@ -83,6 +83,7 @@ def _parser() -> argparse.ArgumentParser:
         if name in {"process", "run", "spark-stream"}:
             option("--window-minutes", "GEORISK_DENSITY_WINDOW_MINUTES", type=int)
             option("--allowed-lateness-minutes", "GEORISK_ALLOWED_LATENESS_MINUTES", type=int)
+            option("--max-future-minutes", "GEORISK_MAX_FUTURE_MINUTES", type=int)
         if name in {"process", "run"}:
             option(
                 "--strict-validation",
@@ -146,21 +147,35 @@ def _dispatch(
         from georisk.ingestion.file_stream import FileStreamPublisher
         from georisk.ingestion.generator import replay_events
 
-        events = {}
+        events: dict[str, list[Any]] = {}
+        malformed = 0
         for key, filename in (
             ("telemetry", "vessel-telemetry.jsonl"),
             ("weather_alerts", "weather-alerts.jsonl"),
         ):
             path = settings.input_dir / filename
-            events[key] = [
-                json.loads(line)
-                for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            events[key] = []
+            for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    record = None
+                if not isinstance(record, dict):
+                    malformed += 1
+                    print(
+                        f"georisk: skipped malformed JSON object at {path}:{line_number}",
+                        file=sys.stderr,
+                    )
+                    continue
+                events[key].append(record)
         with FileStreamPublisher(settings.stream_dir) as publisher:
             result = asdict(
                 replay_events(events, publisher, speed_factor=settings.replay_speed_factor)
             )
+        result["generated"] += malformed
+        result["rejected"] += malformed
         status = int(result["rejected"] > 0)
     elif command == "process":
         from georisk.processing.stream_job import run_streaming_job
@@ -173,6 +188,7 @@ def _dispatch(
                 coverage_mode=settings.coverage_mode,
                 window_minutes=settings.density_window_minutes,
                 allowed_lateness_minutes=settings.allowed_lateness_minutes,
+                max_future_minutes=settings.max_future_minutes,
                 strict=settings.strict_validation,
             )
         )
@@ -223,6 +239,7 @@ def _dispatch(
                 coverage_mode=settings.coverage_mode,
                 window_minutes=settings.density_window_minutes,
                 allowed_lateness_minutes=settings.allowed_lateness_minutes,
+                max_future_minutes=settings.max_future_minutes,
                 available_now=not args.watch,
             )
             try:

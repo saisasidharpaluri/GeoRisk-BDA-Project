@@ -1,6 +1,6 @@
 # Local demonstration runbook
 
-Start in `project/` on Windows with Python 3.13. All commands below are local;
+Start in the repository root on Windows with Python 3.13. All commands below are local;
 no AWS account is required. Use a fresh checkout or fresh output directories
 for a clean lake history. The generator uses seed 7 and historical event times.
 
@@ -50,8 +50,9 @@ PySpark/Java are installed; it is not a live JSONL dashboard feed.
 ## Presentation sequence and clicks
 
 1. Show the SIMULATED DATA badge, H3 resolution, overlap mode, window, and Data
-   freshness panel. Explain that January 2026 event times are intentionally
-   historical, so stale is expected even immediately after processing.
+   freshness panel. Right after `georisk run` the run shows Fresh (wall-clock
+   age since processing). January 2026 event times are intentionally
+   historical, so Processing lag (processing time minus latest event) is large.
 2. On Live map, toggle Vessels, Hazard zones, Risk cells, Corridor density, and
    Routes in the sidebar. Use Inspect vessel and Inspect alert, or click a
    plotted object, to show identity, validity, severity, and position.
@@ -60,17 +61,20 @@ PySpark/Java are installed; it is not a live JSONL dashboard feed.
    checks demonstrate inside/outside and expired-hazard behavior; map hazards
    reflect the latest event time, not animated playback of each arrival.
 4. On Corridor density, change Window (UTC); compare previous/current/next
-   counts and the map extrusion. Explain that repeated messages do not increase
+   counts (a quiet adjacent window shows 0; blank only outside the processed
+   range) and the map extrusion. Explain that repeated messages do not increase
    unique-vessel counts and a vessel may occupy several cells during a window.
 5. On Delay estimates, compare Model MAE (h) and Baseline MAE (h). Toggle
    Demo mode: show synthetic ground truth and explain the synthetic formula.
 6. Under sidebar Route what-if, choose No hazards, then Close inner lane.
    Inspect the Route comparison table, blocked lanes, explanation, and redraw.
-   Set Route risk threshold to 1.0 to show the baseline retained; return to
-   As generated and 0.5 afterward.
+   Set Route risk threshold to 1.0 to show the baseline retained. A threshold
+   near 0 blocks every path: the baseline stays and the alternative reads "No
+   eligible route". Return to As generated and 0.5 afterward.
 7. Expand History for daily local Parquet totals. Show the resolution comparison
-   JSON and explain the coverage/detail trade-off. The guide's S3/Athena step
-   is demonstrated by local Parquet and DuckDB tests; AWS remains undeployed.
+   JSON and explain the coverage/detail trade-off. Local Parquet and DuckDB
+   tests show query semantics only; the guide's S3/Athena step remains unmet
+   because AWS is undeployed.
 8. Toggle Auto-refresh every 10 s to demonstrate rereading snapshots. Stop
    Streamlit with Ctrl+C in its terminal when finished.
 

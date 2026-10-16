@@ -19,6 +19,11 @@ is retained for legacy `generate_events()` callers. Local file replay uses
 `GEORISK_STREAM_DIR=output/stream` and `GEORISK_REPLAY_SPEED_FACTOR=0`; zero
 disables pacing, and positive finite values scale event-time gaps.
 
+`GEORISK_MAX_FUTURE_MINUTES` (default 60, integer 0–10080) bounds how far
+telemetry may lie ahead of the processing wall clock. Later events are
+quarantined as `future_event` and do not advance the watermark. The
+`process`, `run`, and `spark-stream` commands accept `--max-future-minutes`.
+
 `georisk-run` and `georisk-validate` load `GEORISK_ENV_FILE` (default `.env`)
 when it exists. Paths are relative to the working directory. Shell values take
 precedence. `load_env_file(path, override=False)` returns only applied keys;

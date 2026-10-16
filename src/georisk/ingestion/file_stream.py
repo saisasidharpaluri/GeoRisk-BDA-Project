@@ -48,9 +48,14 @@ class FileStreamPublisher:
         sequence = self._sequences[stream_name]
         temporary = directory / f".part-{sequence:06d}.tmp"
         destination = directory / f"part-{sequence:06d}.jsonl"
-        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-            handle.writelines(buffer)
-        os.replace(temporary, destination)
+        try:
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.writelines(buffer)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
         buffer.clear()
         self._sequences[stream_name] += 1
 

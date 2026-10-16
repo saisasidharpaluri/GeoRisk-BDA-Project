@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import h3
 import pytest
 
 duckdb = pytest.importorskip(
@@ -17,12 +18,26 @@ from georisk.storage_analytics.lake import density_summary, risk_summary, write_
 def _risk(event_time: str, vessel_id: str, alerted: bool) -> dict[str, Any]:
     return {
         "schema_version": 1,
+        "event_id": f"{vessel_id}-{event_time}",
         "event_time": event_time,
         "vessel_id": vessel_id,
+        "latitude": 12.5,
+        "longitude": 78.25,
+        "coverage_mode": "overlap",
         "h3_index": "87754e649ffffff",
         "h3_resolution": 7,
         "risk_alert": alerted,
-        "matching_hazards": [{"alert_id": "alert-1", "severity": 4}] if alerted else [],
+        "matching_hazards": [
+            {
+                "alert_id": "alert-1",
+                "hazard_type": "storm",
+                "severity": 4,
+                "valid_from": "2026-01-01T00:00:00Z",
+                "valid_until": "2026-03-01T00:00:00Z",
+            }
+        ]
+        if alerted
+        else [],
     }
 
 
@@ -146,19 +161,18 @@ def test_top_congested_cells_sql(sql_lake):
 
 def test_top_congested_cells_sql_limits_to_twenty(sql_lake):
     lake, connection = sql_lake
+    cells = sorted(h3.grid_disk("87754e649ffffff", 3))[:25]
     write_partitioned(
         [
-            _density(
-                "2026-01-03T00:00:00Z", "2026-01-03T00:15:00Z", f"cell-{index:02d}", 10 + index
-            )
-            for index in range(25)
+            _density("2026-01-03T00:00:00Z", "2026-01-03T00:15:00Z", cell, 10 + index)
+            for index, cell in enumerate(cells)
         ],
         lake,
         dataset_name="density_metrics",
         batch_id="more-cells",
     )
     assert _query(connection, "top_congested_cells.sql") == [
-        {"h3_index": f"cell-{index:02d}", "peak_unique_vessel_count": 10 + index}
+        {"h3_index": cells[index], "peak_unique_vessel_count": 10 + index}
         for index in range(24, 4, -1)
     ]
 

@@ -8,7 +8,10 @@
   "matching_hazards": [
     {
       "alert_id": "alert-1",
-      "severity": 4
+      "severity": 4,
+      "hazard_type": "storm",
+      "valid_from": "2026-01-01T11:00:00+00:00",
+      "valid_until": "2026-01-01T13:00:00+00:00"
     }
   ],
   "event_id": "telemetry-1",

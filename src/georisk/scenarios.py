@@ -143,6 +143,7 @@ def run_acceptance_scenarios(
     record(
         "route_above_threshold_explained",
         route["route_changed"]
+        and route["alternative"] is not None
         and bool(route["alternative"]["blocked_edges"])
         and bool(route["explanation"]),
         route["explanation"],

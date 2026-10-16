@@ -15,15 +15,18 @@ Local batch processing advances the watermark per arrival; Spark evaluates an
 unordered microbatch against the previous committed maximum. These policies
 can disagree within a batch. Local event-ID deduplication resets each run;
 Spark checks persisted date partitions and assumes IDs keep their original
-event date. Latest alert revisions replace older versions; Spark reloads them
-when telemetry arrives and does not revise past outputs for alert-only arrivals.
+event date. Alert revisions apply as of their issue time (the first revision
+also covers earlier telemetry); Spark reloads alerts when telemetry arrives
+and does not revise past outputs for alert-only arrivals. Telemetry more than
+`GEORISK_MAX_FUTURE_MINUTES` ahead of the wall clock is quarantined.
 
 Spark file streaming uses one writer, checkpoint snapshots, and retained density
 keys. There is no bounded retention, multi-writer transaction protocol, or
 production capacity claim. Checkpoints and sink output must be preserved
 together. The default dashboard reads local JSONL snapshots, not the Spark
 Parquet stream; auto-refresh rereads files but does not run processing.
-The seeded event dates are historical, so freshness correctly reports stale.
+Freshness measures wall-clock age since processing, so a new run shows fresh;
+the seeded event dates are historical, so the reported processing lag is large.
 
 The delay label is derived from the same features used for learning. Its
 chronological split is not vessel-disjoint and density is computed over whole

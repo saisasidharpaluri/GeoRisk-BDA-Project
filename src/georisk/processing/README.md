@@ -7,12 +7,14 @@ When PySpark imports, `georisk spark-stream` drains `GEORISK_STREAM_DIR` into
 `GEORISK_SPARK_OUTPUT_DIR` with `GEORISK_SPARK_CHECKPOINT_DIR`; `--watch` keeps
 the query running. The CLI awaits completion and stops its Spark session on exit.
 
-Own event validation, H3 conversion, active-hazard matching, risk events, and 15-minute corridor density using Spark Structured Streaming in AWS Glue.
+Own event validation, H3 conversion, active-hazard matching, risk events, and 15-minute corridor density. Locally this runs as a Python batch processor and an optional Spark Structured Streaming file stream; running it in AWS Glue is planned only.
 
-## Starter modules
+## Modules
 
 - `h3_index.py`: point-to-cell and hazard-geometry coverage interfaces.
-- `stream_job.py`: stream processing entry point.
+- `stream_job.py`: local batch processor used by `georisk process` and `georisk run`.
+- `spark_transforms.py`: Spark DataFrame validation, H3, matching, and density.
+- `spark_stream_job.py`: local Spark file-stream job behind `georisk spark-stream`.
 
 Use resolution 7 as the initial demonstration default and retain the resolution on every output. Expire hazards according to `valid_until`. Deduplicate by vessel, H3 cell, and window before counting unique vessels. Document H3 boundary semantics; refine candidate matches geometrically if accuracy needs it.
 
@@ -42,7 +44,7 @@ Invalid records are quarantined by default while valid records continue through 
 
 Risk rows carry the source event_id, latitude, longitude, and coverage_mode. Only the first valid telemetry record per event_id is processed in each batch; later copies are counted in duplicates_dropped without quarantine or density inflation.
 
-A re-issued alert replaces the earlier version for the whole batch. Among valid alerts sharing an alert_id, the latest event_time wins; ties keep the later input record. Superseded valid versions are counted in alert_revisions_superseded, and coverage is computed only for the retained versions.
+Alert revisions use as-of semantics (`alert_revisions()`, `AlertRevision`). Valid revisions sharing an alert_id are ordered by event_time, then input order. Each applies from its own event_time until the next revision's event_time; the first also applies to earlier telemetry. At equal issue times the later input wins and the earlier never applies. Telemetry matches a revision only when `valid_from <= t < valid_until` and that revision is current at `t`, so a re-issue never rewrites earlier matches. Revisions beyond the first per alert_id are counted in alert_revisions_superseded. A revision whose geometry H3 cannot cover is quarantined as `invalid_geometry` (strict mode raises) before ordering, so the previous revision stays in effect and the batch continues.
 
 Density windows default to 15 minutes. Set GEORISK_DENSITY_WINDOW_MINUTES
 (or `window_minutes` in the processor/runner) to an integer from 1 to 1440
@@ -50,7 +52,10 @@ that divides 1440. Windows are UTC epoch-aligned, half-open intervals;
 60- and 120-minute windows therefore group correctly across hour boundaries.
 
 Telemetry is evaluated in input (arrival) order. After validation and event-ID
-deduplication, events older than `max_event_time - allowed_lateness` are
+deduplication, events more than GEORISK_MAX_FUTURE_MINUTES (default 60, range
+0..10080, `--max-future-minutes`) after the current UTC time are quarantined as
+`future_event` (`future_dropped`) and do not advance the watermark. Events
+older than `max_event_time - allowed_lateness` are
 quarantined with `reason="late_event"` and excluded from risk and density.
 Events exactly on the watermark are accepted. This policy also applies with
 strict validation enabled. Invalid inputs and duplicates do not advance time.
@@ -62,7 +67,8 @@ is sorted by window and cell. Sorting occurs after arrival-order decisions.
 
 The runner returns `metadata` and writes `run-metadata.json` alongside the
 JSONL files. It records processing time, latest accepted event time, watermark,
-settings, final stats (including malformed JSON), and `simulated: true`.
+settings (including `max_future_minutes`), final stats (including malformed
+JSON), and `simulated: true`.
 The pipeline embeds it under `processing.metadata`. This wall-clock-dependent
 file is excluded from the reproducible artifact manifest.
 
@@ -78,13 +84,16 @@ Each line contains `ts`, `level`, `logger`, `message`, and structured fields.
 `spark_transforms.py` reads typed JSONL, captures malformed records, validates
 required telemetry fields and bounds, and assigns H3 cells with a pandas UDF.
 `split_valid()` returns valid and reason-tagged invalid DataFrames. Apply it
-before `assign_h3()`. UTC timestamps, schema version 1, speed 0..60 knots and
-heading 0..<360 degrees are required. Static alerts retain geometry as JSON.
+before `assign_h3()`. UTC timestamps (`UTC_TIMESTAMP_PATTERN`, the contract's
+RFC 3339 profile), schema version 1, speed 0..60 knots and heading 0..<360
+degrees are required. Static alerts retain geometry as JSON.
 
-`hazard_cells_df()` validates the small driver-side alert list and expands only
-its latest revisions. `match_risk()` broadcasts those cells and uses half-open
-validity intervals. Unmatched events have `matching_hazards=[]`; matched hazards
-are sorted by alert ID. Output types match the Arrow lake schema.
+`hazard_cells_df()` validates the small driver-side alert list and expands every
+revision, with `effective_from_ts`/`effective_until_ts` from `alert_revisions()`.
+`match_risk()` broadcasts those cells and applies both the half-open validity
+interval and the revision's as-of interval. Unmatched events have
+`matching_hazards=[]`; matched hazards are sorted by alert ID. Output types
+match the Arrow lake schema.
 
 `density()` counts distinct vessels in configurable UTC windows (15 minutes by
 default). Repeated positions never inflate the vessel count. Windows must divide
@@ -110,6 +119,7 @@ query = run_stream(
     coverage_mode=settings.coverage_mode,
     window_minutes=settings.density_window_minutes,
     allowed_lateness_minutes=settings.allowed_lateness_minutes,
+    max_future_minutes=settings.max_future_minutes,
 )
 query.awaitTermination()
 spark.stop()
@@ -123,9 +133,13 @@ immediately; its caller owns waiting/stopping and the Spark session lifecycle.
 GEORISK_SPARK_OUTPUT_DIR defaults to `output/spark` and
 GEORISK_SPARK_CHECKPOINT_DIR to `output/spark/checkpoints`. Risk and density use
 the existing `curated/<dataset>/event_date=YYYY-MM-DD/` lake layout and can be
-read with `lake.read_dataset()`. Invalid telemetry and alert revisions go under
-`quarantine/` with a reason. Alerts are reloaded at each new telemetry batch;
-alert-only arrivals do not rewrite historical risk outputs.
+read with `lake.read_dataset()`. Invalid telemetry goes under
+`quarantine/telemetry/batch-N`, future telemetry under `quarantine/future/batch-N`.
+Rejected alert revisions (including `invalid_geometry`) form one snapshot,
+`quarantine/alerts/rejected-alerts.jsonl`, atomically replaced each batch.
+Alerts are reloaded at each new telemetry batch, ordered by source file name
+then position so equal-time ties resolve as locally; alert-only arrivals do
+not rewrite historical risk outputs.
 
 Risk processing deduplicates event IDs within each batch and against affected
 date partitions already in the lake. Event IDs must retain their original event
@@ -142,7 +156,8 @@ published metrics unchanged. No unsupported streaming count-distinct is used.
 The persisted `georisk-watermark.json` records `max_event_time`. New unique valid
 events strictly older than the previous batch maximum minus
 GEORISK_ALLOWED_LATENESS_MINUTES (default 10) go to quarantine as `late_event`.
-The boundary is accepted. Invalid and duplicate events do not advance the
+The boundary is accepted. Invalid, duplicate, and future events (later than
+the batch's wall clock plus `max_future_minutes`) do not advance the
 watermark. The file is atomically replaced only after the sinks succeed.
 Spark applies this policy between unordered microbatches; the local processor
 advances time for each record in arrival order, so mixed out-of-order records

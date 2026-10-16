@@ -102,6 +102,7 @@ def generate_scenario(config: ScenarioConfig) -> dict[str, list[Event]]:
                 DEFAULT_START_TIME,
                 position=position,
                 speed_knots=6.0 if congested else None,
+                seed=config.seed,
             )
         )
     alerts = []

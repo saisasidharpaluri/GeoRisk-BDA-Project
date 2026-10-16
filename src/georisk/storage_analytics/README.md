@@ -1,11 +1,12 @@
 # Member 3 - Storage and analytics
 
-Own the S3 data lake, Parquet layout, Glue Data Catalog tables, Athena examples, and a Spark MLlib delay baseline.
+Own the S3 data lake, Parquet layout, Athena examples, and the delay models. Glue Data Catalog table registration is planned; no code registers tables yet.
 
-## Starter modules
+## Modules
 
-- `lake.py`: write raw and processed datasets to S3 and register their layout.
-- `delay_model.py`: train and evaluate a delay model on synthetic history.
+- `lake.py`: write and read raw and curated Parquet datasets locally or to S3.
+- `delay_model.py`: train and evaluate the linear delay model on synthetic history.
+- `spark_delay_model.py`: the optional Spark MLlib GBT delay model.
 - `sql/`: portable Athena/Trino and DuckDB queries for risk summaries, density,
   congested cells, vessel exposure, and hourly alert counts (see `sql/README.md`).
 
@@ -19,8 +20,13 @@ use `curated`. Each row is partitioned by its own UTC `event_time` date, or
 `window_start` for density. Empty batches return an empty list without files.
 Replaying the same batch replaces its file in each affected partition; other
 batch IDs and dates remain untouched. Use a different batch ID to append data.
+`replace_batch=True` also removes this batch's files from local date partitions
+absent from the new records; `georisk run` uses it so reruns leave no stale
+partitions. The default (`False`) keeps incremental behavior. Local files are
+written to a hidden temporary file, then atomically renamed with `os.replace`.
 
-`write_dataset()` remains available for callers supplying an explicit date.
+`write_dataset()` remains available for callers supplying an explicit date; it
+rejects records whose UTC date differs from that `event_date`.
 Both writers support the same zone layout for `s3://` destinations when `boto3`
 is available. `read_dataset()`, `risk_summary()`, and `density_summary()` read
 the local zone paths. The pipeline writes all five datasets and reports a list
@@ -30,8 +36,9 @@ Acceptance requires all five datasets and every listed file to exist.
 `delay_model.py` documents the synthetic label formula in
 `make_synthetic_label()`, performs a time-ordered split, fits a regularized
 linear regression, and reports MAE/RMSE alongside a training-mean baseline.
-The model is intentionally a local deterministic baseline; the same feature
-columns can be mapped to Spark MLlib for AWS Glue execution.
+The linear model is the local deterministic default; the Spark MLlib GBT model
+in `spark_delay_model.py` (below) uses the same feature columns. Running either
+in AWS Glue is planned.
 
 `delay_features.build_delay_rows()` joins each processed risk event to its
 telemetry by `event_id`. Speed is clamped to at least 1 knot; distance is the
@@ -63,7 +70,9 @@ at zero. Only evaluation rows contribute to the reported MAE/RMSE.
 `features`, and `coefficients` (intercept first, followed by one weight per
 feature). Load the JSON and call `delay_model.predict(model["coefficients"],
 rows)` to reproduce predictions; rows need features but no labels. Both JSON
-artifacts and the delay Parquet files are included in the run manifest.
+artifacts and the delay Parquet files are included in the run manifest; a
+listed file that is missing makes `artifact_manifest()` raise
+`FileNotFoundError`.
 
 ## Handoff
 

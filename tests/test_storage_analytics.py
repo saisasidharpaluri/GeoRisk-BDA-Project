@@ -37,12 +37,28 @@ UTC = timezone.utc
 def _risk(index: int, alerted: bool = True) -> dict:
     return {
         "schema_version": 1,
+        "event_id": f"telemetry-{index}",
         "event_time": f"2026-01-01T12:{index:02d}:00Z",
         "vessel_id": f"vessel-{index % 2}",
+        "latitude": 12.5,
+        "longitude": 78.25,
+        "coverage_mode": "overlap",
         "h3_index": "87754e649ffffff",
         "h3_resolution": 7,
         "risk_alert": alerted,
-        "matching_hazards": ([{"alert_id": "alert-1", "severity": 4}] if alerted else []),
+        "matching_hazards": (
+            [
+                {
+                    "alert_id": "alert-1",
+                    "hazard_type": "storm",
+                    "severity": 4,
+                    "valid_from": "2026-01-01T11:00:00Z",
+                    "valid_until": "2026-01-02T13:00:00Z",
+                }
+            ]
+            if alerted
+            else []
+        ),
     }
 
 
@@ -195,6 +211,31 @@ def test_rewrite_same_batch_id_is_idempotent(tmp_path):
     assert len(rows) == 3
     assert len(list(tmp_path.rglob("*.parquet"))) == 3
     assert risk_summary(tmp_path)["alerted_event_count"] == 2
+
+
+def test_replace_batch_removes_stale_dates_of_the_same_batch(tmp_path):
+    first = [_risk(0), {**_risk(1), "event_time": "2026-01-02T12:00:00Z"}]
+    write_partitioned(first, tmp_path, dataset_name="risk_events", batch_id="snap")
+    write_partitioned([_risk(5)], tmp_path, dataset_name="risk_events", batch_id="other")
+    write_partitioned(
+        [_risk(3)], tmp_path, dataset_name="risk_events", batch_id="snap", replace_batch=True
+    )
+    rows = read_dataset(tmp_path, "risk_events")
+    assert sorted(row["event_time"] for row in rows) == sorted(
+        [_risk(3)["event_time"], _risk(5)["event_time"]]
+    )
+    assert not list(tmp_path.rglob("event_date=2026-01-02/*.parquet"))
+
+
+def test_write_dataset_rejects_records_from_another_date(tmp_path):
+    with pytest.raises(ValueError, match="do not fall on event_date 2026-01-02"):
+        write_dataset([_risk(0)], tmp_path, "2026-01-02")
+    assert not list(tmp_path.rglob("*.parquet"))
+
+
+def test_local_write_leaves_no_temporary_files(tmp_path):
+    write_partitioned([_risk(0)], tmp_path, dataset_name="risk_events")
+    assert [path.name for path in tmp_path.rglob("*") if path.is_file()] == ["part-00000.parquet"]
 
 
 def test_raw_and_curated_zones(tmp_path):
@@ -511,8 +552,10 @@ def test_mixed_polygon_and_multipolygon_alerts_round_trip(tmp_path):
 
 
 def test_empty_and_alerted_risk_partitions_read_together(tmp_path):
-    write_dataset([_risk(0, False)], tmp_path, "2026-01-02")
-    write_dataset([_risk(1)], tmp_path, "2026-01-03")
+    write_dataset(
+        [{**_risk(0, False), "event_time": "2026-01-02T12:00:00Z"}], tmp_path, "2026-01-02"
+    )
+    write_dataset([{**_risk(1), "event_time": "2026-01-03T12:01:00Z"}], tmp_path, "2026-01-03")
     rows = read_dataset(tmp_path, "risk_events")
     assert len(rows) == 2
     assert {row["event_date"] for row in rows} == {"2026-01-02", "2026-01-03"}

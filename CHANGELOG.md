@@ -12,6 +12,39 @@
   CI for Python 3.10–3.13 plus a Python 3.11/Java 17 Spark job.
 - An 85% statement-coverage gate, omitting the AWS deployment module only.
 
+### Fixed (2026-10-16 audit, see `PROJECT_AUDIT.md`)
+
+- Contracts reject NaN/infinite numbers and accept only strict RFC 3339 UTC
+  timestamps, identically on Python 3.10–3.13 and in Spark.
+- Weather-alert rings must have three distinct positions, non-zero area, and
+  no antimeridian-crossing edge; risk events now require identity, location,
+  coverage mode, and full hazard provenance; risk/density rows check flag
+  consistency, window order, and H3 cell/resolution agreement.
+- Alert revisions apply as-of their issue time in local processing, Spark,
+  route scoring, and the dashboard instead of retroactively replacing earlier
+  versions.
+- Alerts whose geometry H3 cannot cover are quarantined (`invalid_geometry`)
+  instead of aborting the batch.
+- Telemetry beyond `GEORISK_MAX_FUTURE_MINUTES` is quarantined
+  (`future_event`) so one bad clock cannot advance the watermark.
+- Spark keeps one replaceable rejected-alert snapshot instead of duplicating
+  rejections every microbatch, and orders alert revisions deterministically.
+- Route reports use comparable penalised costs for baseline and alternative;
+  a threshold with no eligible alternative keeps the baseline visible; blocked
+  edges are tracked per edge taken; long or pentagon-crossing lanes no longer
+  fail H3 path tracing.
+- Dashboard counts only alerts active at the latest event time, uses the
+  processed run's H3 settings, orders timestamps chronologically, compares
+  calendar-adjacent density windows, applies risk filters to the severity
+  chart, shows processing lag, and adds delay feature context.
+- Event IDs include the seed and event time, so different runs never collide.
+- Local Parquet writes are atomic, partition dates are checked, and
+  `georisk run` replaces its whole snapshot batch.
+- Replay keeps counters on failure (`ReplayError.stats`), skips malformed
+  JSON lines, and file batches are fsynced and leave no temp files.
+- Both resolution-comparison entry points use the same timed scenario.
+- Artifact manifests fail on missing files instead of omitting them.
+
 ### Changed
 
 - Updated local implementation status and module descriptions; the original

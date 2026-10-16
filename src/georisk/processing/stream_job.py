@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from georisk.contracts import SCHEMA_VERSION, ContractValidationError, validate_event
+from georisk.contracts import (
+    SCHEMA_VERSION,
+    ContractValidationError,
+    parse_utc_timestamp,
+    validate_event,
+)
 from georisk.processing.h3_index import (
     COVERAGE_MODES,
     DEFAULT_COVERAGE_MODE,
@@ -24,18 +31,11 @@ logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
 WINDOW_MINUTES = 15
+MAX_FUTURE_MINUTES = 60
 
 
 def _parse_utc(value: str) -> datetime:
-    if not isinstance(value, str):
-        raise ValueError("timestamp must be a string")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError(f"invalid timestamp: {value}") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
-        raise ValueError("timestamps must be timezone-aware UTC")
-    return parsed.astimezone(UTC)
+    return parse_utc_timestamp(value)
 
 
 def _timestamp(value: datetime) -> str:
@@ -47,14 +47,73 @@ def _window_start(value: datetime, minutes: int) -> datetime:
     return datetime.fromtimestamp(seconds - seconds % (minutes * 60), tz=UTC)
 
 
+@dataclass(frozen=True)
+class AlertRevision:
+    """One accepted alert revision and the event-time interval in which it applies.
+
+    A revision applies from its own ``event_time`` until the next revision of
+    the same alert is issued. The first revision also applies to earlier
+    telemetry, so a single-revision alert behaves exactly like its validity
+    interval. ``None`` bounds are open.
+    """
+
+    alert: dict[str, Any]
+    valid_from: datetime
+    valid_until: datetime
+    effective_from: datetime | None
+    effective_until: datetime | None
+
+    def applies_at(self, event_time: datetime) -> bool:
+        return (
+            self.valid_from <= event_time < self.valid_until
+            and (self.effective_from is None or self.effective_from <= event_time)
+            and (self.effective_until is None or event_time < self.effective_until)
+        )
+
+
+def alert_revisions(alerts: Iterable[Mapping[str, Any]]) -> list[AlertRevision]:
+    """Order validated alerts into as-of revision intervals per ``alert_id``.
+
+    Revisions sort by ``event_time`` and then input order; at equal issue times
+    the later input wins and the earlier one never applies.
+    """
+    grouped: dict[str, list[tuple[datetime, int, dict[str, Any]]]] = defaultdict(list)
+    for order, alert in enumerate(alerts):
+        record = alert if isinstance(alert, dict) else dict(alert)
+        grouped[alert["alert_id"]].append((_parse_utc(alert["event_time"]), order, record))
+    revisions = []
+    for alert_id in sorted(grouped):
+        ordered = sorted(grouped[alert_id], key=lambda item: (item[0], item[1]))
+        collapsed: list[tuple[datetime, dict[str, Any]]] = []
+        for issued, _, alert in ordered:
+            if collapsed and collapsed[-1][0] == issued:
+                collapsed[-1] = (issued, alert)
+            else:
+                collapsed.append((issued, alert))
+        for index, (issued, alert) in enumerate(collapsed):
+            revisions.append(
+                AlertRevision(
+                    alert=alert,
+                    valid_from=_parse_utc(alert["valid_from"]),
+                    valid_until=_parse_utc(alert["valid_until"]),
+                    effective_from=None if index == 0 else issued,
+                    effective_until=(
+                        collapsed[index + 1][0] if index + 1 < len(collapsed) else None
+                    ),
+                )
+            )
+    return revisions
+
+
 def _matching_hazards(
     cell: str,
     event_time: datetime,
-    coverage: dict[str, list[tuple[dict[str, Any], datetime, datetime]]],
+    coverage: dict[str, list[AlertRevision]],
 ) -> list[dict[str, Any]]:
     matches = []
-    for alert, valid_from, valid_until in coverage.get(cell, []):
-        if valid_from <= event_time < valid_until:
+    for revision in coverage.get(cell, []):
+        alert = revision.alert
+        if revision.applies_at(event_time):
             matches.append(
                 {
                     "alert_id": alert["alert_id"],
@@ -76,10 +135,27 @@ def process_events(
     coverage_mode: str = DEFAULT_COVERAGE_MODE,
     window_minutes: int = WINDOW_MINUTES,
     allowed_lateness_minutes: int = 10,
+    max_future_minutes: int = MAX_FUTURE_MINUTES,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Create risk events and unique-vessel density metrics from one batch."""
+    """Create risk events and unique-vessel density metrics from one batch.
+
+    Telemetry stamped more than ``max_future_minutes`` after ``now`` (default:
+    the current UTC time) is quarantined as ``future_event`` so that a single
+    bad clock cannot advance the watermark and mark later valid data as late.
+    """
     if not isinstance(strict, bool):
         raise TypeError("strict must be a boolean")
+    if (
+        not isinstance(max_future_minutes, int)
+        or isinstance(max_future_minutes, bool)
+        or max_future_minutes < 0
+    ):
+        raise ValueError("max_future_minutes must be a non-negative integer")
+    reference_time = datetime.now(UTC) if now is None else now
+    if reference_time.tzinfo is None or reference_time.utcoffset() != timedelta(0):
+        raise ValueError("now must be timezone-aware UTC")
+    future_limit = reference_time + timedelta(minutes=max_future_minutes)
     if (
         not isinstance(window_minutes, int)
         or isinstance(window_minutes, bool)
@@ -107,6 +183,7 @@ def process_events(
     stats: dict[str, Any] = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
     stats["duplicates_dropped"] = 0
     stats["late_dropped"] = 0
+    stats["future_dropped"] = 0
     max_event_time: datetime | None = None
     allowed_lateness = timedelta(minutes=allowed_lateness_minutes)
     alert_records = []
@@ -127,21 +204,28 @@ def process_events(
             continue
         alert_records.append(dict(alert))
 
-    latest_alerts: dict[str, dict[str, Any]] = {}
+    # Geometry is checked before revision ordering so a rejected revision does
+    # not leave an interval in which no version of the alert applies.
+    cells_by_alert: dict[int, set[str]] = {}
+    covered_alerts = []
     for alert in alert_records:
-        previous = latest_alerts.get(alert["alert_id"])
-        if previous is None or _parse_utc(alert["event_time"]) >= _parse_utc(
-            previous["event_time"]
-        ):
-            latest_alerts[alert["alert_id"]] = alert
-    stats["alert_revisions_superseded"] = len(alert_records) - len(latest_alerts)
-
-    coverage: dict[str, list[tuple[dict[str, Any], datetime, datetime]]] = {}
-    for alert in latest_alerts.values():
-        valid_from = _parse_utc(alert["valid_from"])
-        valid_until = _parse_utc(alert["valid_until"])
-        for cell in polygon_to_cells(alert["geometry"], resolution, coverage_mode):
-            coverage.setdefault(cell, []).append((alert, valid_from, valid_until))
+        try:
+            cells_by_alert[id(alert)] = polygon_to_cells(
+                alert["geometry"], resolution, coverage_mode
+            )
+        except ValueError as exc:
+            if strict:
+                raise
+            quarantine.append(_quarantine_entry("weather_alert", "invalid_geometry", alert, exc))
+            continue
+        covered_alerts.append(alert)
+    coverage: dict[str, list[AlertRevision]] = {}
+    for revision in alert_revisions(covered_alerts):
+        for cell in cells_by_alert[id(revision.alert)]:
+            coverage.setdefault(cell, []).append(revision)
+    stats["alert_revisions_superseded"] = len(covered_alerts) - len(
+        {alert["alert_id"] for alert in covered_alerts}
+    )
 
     risk_events = []
     seen_event_ids: set[str] = set()
@@ -162,6 +246,19 @@ def process_events(
             continue
         seen_event_ids.add(event["event_id"])
         event_time = _parse_utc(event["event_time"])
+        if event_time > future_limit:
+            stats["future_dropped"] += 1
+            quarantine.append(
+                _quarantine_entry(
+                    "vessel_telemetry",
+                    "future_event",
+                    event,
+                    ValueError(
+                        f"event_time is later than the allowed limit {_timestamp(future_limit)}"
+                    ),
+                )
+            )
+            continue
         if max_event_time is not None and event_time < max_event_time - allowed_lateness:
             stats["late_dropped"] += 1
             quarantine.append(
@@ -237,13 +334,24 @@ def process_events(
     }
 
 
+def _json_safe(value: Any) -> Any:
+    """Replace NaN/infinity with strings so quarantined records stay valid JSON."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _quarantine_entry(contract: str, reason: str, record: Any, exc: Exception) -> dict[str, Any]:
     """Preserve rejected input with validation details and a UTC timestamp."""
     entry = {
         "contract": contract,
         "reason": reason,
         "errors": exc.errors if isinstance(exc, ContractValidationError) else [str(exc)],
-        "record": dict(record) if isinstance(record, Mapping) else record,
+        "record": _json_safe(dict(record) if isinstance(record, Mapping) else record),
         "quarantined_at": _timestamp(datetime.now(UTC)),
     }
     logger.debug("Record quarantined", extra={"georisk": entry})
@@ -317,6 +425,7 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
         coverage_mode=config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
         window_minutes=config.get("window_minutes", WINDOW_MINUTES),
         allowed_lateness_minutes=config.get("allowed_lateness_minutes", 10),
+        max_future_minutes=config.get("max_future_minutes", MAX_FUTURE_MINUTES),
     )
     for entry in quarantine:
         key = "telemetry_in" if entry["contract"] == "vessel_telemetry" else "alerts_in"
@@ -331,6 +440,7 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
         "coverage_mode": config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
         "window_minutes": config.get("window_minutes", WINDOW_MINUTES),
         "allowed_lateness_minutes": config.get("allowed_lateness_minutes", 10),
+        "max_future_minutes": config.get("max_future_minutes", MAX_FUTURE_MINUTES),
         "counts": dict(results["stats"]),
         "simulated": True,
     }

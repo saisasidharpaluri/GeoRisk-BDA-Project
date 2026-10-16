@@ -13,7 +13,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from georisk.contracts import SCHEMA_VERSION, ContractValidationError, validate_event
+from georisk.contracts import (
+    SCHEMA_VERSION,
+    ContractValidationError,
+    parse_utc_timestamp,
+    validate_event,
+)
 from georisk.geo_demo import DEMO_NODES, DEMO_PATHS, haversine_nm, initial_bearing_deg
 
 UTC = timezone.utc
@@ -36,6 +41,14 @@ class ReplayStats:
     rejected: int
 
 
+class ReplayError(RuntimeError):
+    """A replay finished with publisher failures; ``stats`` keeps its counters."""
+
+    def __init__(self, message: str, stats: ReplayStats) -> None:
+        super().__init__(message)
+        self.stats = stats
+
+
 def _utc_timestamp(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise ValueError("start_time must be timezone-aware UTC")
@@ -55,7 +68,7 @@ def _polygon(center_latitude: float, center_longitude: float, size: float) -> di
     return {"type": "Polygon", "coordinates": coordinates}
 
 
-def _weather_alert(rng: random.Random, index: int, start_time: datetime) -> Event:
+def _weather_alert(rng: random.Random, index: int, start_time: datetime, seed: int) -> Event:
     center_latitude = DEMO_NODES["chokepoint"][0] + rng.uniform(-0.15, 0.15)
     center_longitude = DEMO_NODES["chokepoint"][1] + rng.uniform(-0.15, 0.15)
     valid_from = start_time - timedelta(minutes=5)
@@ -63,7 +76,7 @@ def _weather_alert(rng: random.Random, index: int, start_time: datetime) -> Even
     event_time = valid_from
     return {
         "schema_version": SCHEMA_VERSION,
-        "event_id": f"alert-event-{index:04d}",
+        "event_id": f"alert-event-s{seed}-{index:04d}",
         "alert_id": f"alert-{index:04d}",
         "event_time": _utc_timestamp(event_time),
         "valid_from": _utc_timestamp(valid_from),
@@ -83,8 +96,14 @@ def _vessel_track(
     *,
     position: tuple[float, float] | None = None,
     speed_knots: float | None = None,
+    seed: int = 0,
 ) -> list[Event]:
-    """Move one vessel along a lane, carrying excess distance across waypoints."""
+    """Move one vessel along a lane, carrying excess distance across waypoints.
+
+    Event IDs combine the seed, vessel, and event time, so reruns of the same
+    configuration are idempotent while different seeds or sampling intervals
+    never reuse an ID for a different observation.
+    """
     path = DEMO_PATHS["inner" if position is not None or vessel_index % 2 == 0 else "outer"]
     waypoints = [DEMO_NODES[node] for node in path]
     target_index = 1
@@ -109,12 +128,14 @@ def _vessel_track(
         ):
             target_index += 1
         heading = initial_bearing_deg(latitude, longitude, *waypoints[target_index])
+        event_time = start_time + timedelta(seconds=interval_seconds * point_index)
         event = {
             "schema_version": SCHEMA_VERSION,
-            "event_id": f"telemetry-{vessel_index:05d}-{point_index:04d}",
-            "event_time": _utc_timestamp(
-                start_time + timedelta(seconds=interval_seconds * point_index)
+            "event_id": (
+                f"telemetry-s{seed}-{vessel_index:05d}-"
+                f"{event_time.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}"
             ),
+            "event_time": _utc_timestamp(event_time),
             "vessel_id": f"vessel-{vessel_index:05d}",
             "latitude": round(latitude, 6),
             "longitude": round(longitude, 6),
@@ -172,12 +193,14 @@ def generate_events(
         raise ValueError("start_time must be timezone-aware UTC")
 
     rng = random.Random(seed)
-    alerts = [_weather_alert(rng, index, start_time) for index in range(2)]
+    alerts = [_weather_alert(rng, index, start_time, seed) for index in range(2)]
     telemetry: list[Event] = []
 
     for vessel_index in range(vessel_count):
         telemetry.extend(
-            _vessel_track(rng, vessel_index, telemetry_points, interval_seconds, start_time)
+            _vessel_track(
+                rng, vessel_index, telemetry_points, interval_seconds, start_time, seed=seed
+            )
         )
 
     for alert in alerts:
@@ -220,10 +243,8 @@ def iter_events_by_time(
         if isinstance(event, Mapping):
             event_id = str(event.get("event_id", ""))
             try:
-                parsed = datetime.fromisoformat(event["event_time"].replace("Z", "+00:00"))
-                if parsed.tzinfo is not None:
-                    timestamp = parsed.astimezone(UTC)
-            except (KeyError, TypeError, ValueError, AttributeError):
+                timestamp = parse_utc_timestamp(event["event_time"])
+            except (KeyError, ValueError):
                 pass
         return timestamp, 0 if stream == "weather_alerts" else 1, event_id
 
@@ -239,11 +260,12 @@ def replay_events(
     speed_factor: float | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ReplayStats:
-    """Publish at most ``max_events`` valid events and count failures.
+    """Read at most ``max_events`` records, publish the valid ones, and count failures.
 
-    A publisher exception rejects only the current record; the exception is
-    re-raised after counting so callers cannot mistake a partial replay for
-    success.
+    ``max_events`` bounds the records read, valid or not. A publisher exception
+    rejects only the current record; after the replay a :class:`ReplayError`
+    carrying the final counters is raised so callers cannot mistake a partial
+    replay for success.
     """
     if max_events is not None and (
         not isinstance(max_events, int) or isinstance(max_events, bool) or max_events < 0
@@ -273,7 +295,7 @@ def replay_events(
             if on_invalid is not None:
                 on_invalid(stream_name, event, exc)
             continue
-        event_time = datetime.fromisoformat(event["event_time"].replace("Z", "+00:00"))
+        event_time = parse_utc_timestamp(event["event_time"])
         if speed_factor and previous_time is not None:
             delay = min(5.0, (event_time - previous_time).total_seconds() / speed_factor)
             if delay > 0:
@@ -287,11 +309,23 @@ def replay_events(
                 first_error = exc
         else:
             published += 1
+    stats = ReplayStats(generated, published, rejected)
     if first_error is not None:
-        raise RuntimeError(
-            f"Replay failed for {rejected} of {generated} generated events"
+        raise ReplayError(
+            f"Replay failed for {rejected} of {generated} generated events", stats
         ) from first_error
-    return ReplayStats(generated, published, rejected)
+    return stats
+
+
+def _json_safe(value: Any) -> Any:
+    """Replace NaN/infinity with strings so a quarantined record stays valid JSON."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def write_jsonl(events: Mapping[str, Iterable[Event]], output_dir: str | Path) -> ReplayStats:
@@ -307,7 +341,7 @@ def write_jsonl(events: Mapping[str, Iterable[Event]], output_dir: str | Path) -
         }
 
         def publish(stream: str, event: Event) -> None:
-            handles[stream].write(json.dumps(event, sort_keys=True) + "\n")
+            handles[stream].write(json.dumps(event, sort_keys=True, allow_nan=False) + "\n")
 
         def quarantine(stream: str, event: Event, exc: Exception) -> None:
             publish(
@@ -317,7 +351,7 @@ def write_jsonl(events: Mapping[str, Iterable[Event]], output_dir: str | Path) -
                     "errors": exc.errors
                     if isinstance(exc, ContractValidationError)
                     else [str(exc)],
-                    "record": event,
+                    "record": _json_safe(event),
                 },
             )
 

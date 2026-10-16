@@ -32,18 +32,16 @@ def sha256_file(path: str | Path) -> str:
 
 
 def artifact_manifest(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
-    """Build a stable manifest for existing files, sorted by path."""
+    """Build a stable manifest sorted by path; a missing file raises ``FileNotFoundError``.
+
+    Every listed artifact is expected to exist, so a missing file is reported
+    instead of silently producing an incomplete manifest.
+    """
     entries = []
     for value in paths:
         path = Path(value)
-        if path.is_file():
-            entries.append(
-                {
-                    "path": str(path),
-                    "bytes": path.stat().st_size,
-                    "sha256": sha256_file(path),
-                }
-            )
+        digest = sha256_file(path)
+        entries.append({"path": str(path), "bytes": path.stat().st_size, "sha256": digest})
     return sorted(entries, key=lambda entry: entry["path"])
 
 
@@ -145,8 +143,8 @@ def acceptance_checks(report: Mapping[str, Any]) -> dict[str, Any]:
     )
     check(
         "route_comparison",
-        bool(route.get("baseline", {}).get("path"))
-        and bool(route.get("alternative", {}).get("path")),
+        bool((route.get("baseline") or {}).get("path"))
+        and bool((route.get("alternative") or {}).get("path")),
         "baseline and alternative routes are present",
     )
     check(

@@ -48,12 +48,24 @@ def _alert() -> dict:
 def _risk_event() -> dict:
     return {
         "schema_version": 1,
+        "event_id": "telemetry-1",
         "event_time": _timestamp(),
         "vessel_id": "vessel-1",
+        "latitude": 12.5,
+        "longitude": 78.25,
+        "coverage_mode": "center",
         "h3_index": "87754e649ffffff",
         "h3_resolution": 7,
         "risk_alert": True,
-        "matching_hazards": [{"alert_id": "alert-1", "severity": 4}],
+        "matching_hazards": [
+            {
+                "alert_id": "alert-1",
+                "hazard_type": "storm",
+                "severity": 4,
+                "valid_from": "2026-01-01T11:00:00Z",
+                "valid_until": "2026-01-01T13:00:00Z",
+            }
+        ],
     }
 
 
@@ -113,17 +125,118 @@ def test_unknown_fields_are_rejected():
         validate_event("vessel_telemetry", event)
 
 
-def test_risk_event_accepts_new_optional_fields():
-    event = dict(
-        _risk_event(),
-        event_id="telemetry-1",
-        latitude=12.5,
-        longitude=78.25,
-        coverage_mode="center",
-    )
+def test_risk_event_accepts_both_coverage_modes():
+    event = _risk_event()
     validate_event("risk_event", event)
     event["coverage_mode"] = "overlap"
     validate_event("risk_event", event)
+
+
+@pytest.mark.parametrize("field", ["event_id", "latitude", "longitude", "coverage_mode"])
+def test_risk_event_requires_identity_and_location(field):
+    event = _risk_event()
+    del event[field]
+    with pytest.raises(ContractValidationError, match=field):
+        validate_event("risk_event", event)
+
+
+@pytest.mark.parametrize("field", ["hazard_type", "valid_from", "valid_until"])
+def test_matching_hazard_requires_provenance(field):
+    event = _risk_event()
+    del event["matching_hazards"][0][field]
+    with pytest.raises(ContractValidationError, match=field):
+        validate_event("risk_event", event)
+
+
+@pytest.mark.parametrize(
+    ("contract", "factory", "field"),
+    [
+        ("vessel_telemetry", _telemetry, "latitude"),
+        ("vessel_telemetry", _telemetry, "speed_knots"),
+        ("vessel_telemetry", _telemetry, "heading_deg"),
+        ("risk_event", _risk_event, "longitude"),
+    ],
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numbers_are_rejected(contract, factory, field, value):
+    event = dict(factory(), **{field: value})
+    with pytest.raises(ContractValidationError, match=f"{field}: must be a finite number"):
+        validate_event(contract, event)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-01-01T12:00:00Z",
+        "2026-01-01T12:00:00.1Z",
+        "2026-01-01T12:00:00.123456789Z",
+        "2026-01-01T12:00:00+00:00",
+        "2026-01-01T12:00:00-00:00",
+    ],
+)
+def test_rfc3339_utc_timestamps_are_accepted(value):
+    validate_event("vessel_telemetry", dict(_telemetry(), event_time=value))
+    assert contracts.parse_utc_timestamp(value).tzinfo == timezone.utc
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-01-01 12:00:00Z",
+        "20260101T120000Z",
+        "2026-W01-4T12:00:00Z",
+        "2026-01-01T12Z",
+        "2026-01-01T12:00:00",
+        "2026-01-01T12:00:00+00:00:00",
+        "2026-02-30T12:00:00Z",
+        "2026-01-01T12:00:00+01:00",
+    ],
+)
+def test_non_rfc3339_timestamps_are_rejected(value):
+    with pytest.raises(ContractValidationError, match="event_time"):
+        validate_event("vessel_telemetry", dict(_telemetry(), event_time=value))
+
+
+def test_fractional_seconds_are_truncated_to_microseconds():
+    parsed = contracts.parse_utc_timestamp("2026-01-01T12:00:00.1234567Z")
+    assert parsed.microsecond == 123456
+
+
+@pytest.mark.parametrize(
+    ("ring", "message"),
+    [
+        ([[1, 1], [1, 1], [1, 1], [1, 1]], "three distinct positions"),
+        ([[0, 0], [1, 1], [2, 2], [0, 0]], "zero area"),
+        ([[179, 0], [-179, 0], [-179, 1], [179, 0]], "antimeridian"),
+    ],
+)
+def test_degenerate_or_wrapping_rings_are_rejected(ring, message):
+    alert = _alert()
+    alert["geometry"] = {"type": "Polygon", "coordinates": [ring]}
+    with pytest.raises(ContractValidationError, match=message):
+        validate_event("weather_alert", alert)
+
+
+def test_risk_alert_flag_must_match_hazards():
+    with pytest.raises(ContractValidationError, match="risk_alert"):
+        validate_event("risk_event", dict(_risk_event(), risk_alert=False))
+    with pytest.raises(ContractValidationError, match="risk_alert"):
+        validate_event("risk_event", dict(_risk_event(), matching_hazards=[]))
+
+
+@pytest.mark.parametrize("contract", ["risk_event", "density_metric"])
+def test_h3_index_must_be_valid_and_match_resolution(contract):
+    factory = _risk_event if contract == "risk_event" else _density_metric
+    with pytest.raises(ContractValidationError, match="valid H3 cell"):
+        validate_event(contract, dict(factory(), h3_index="not-h3"))
+    with pytest.raises(ContractValidationError, match="resolution does not match"):
+        validate_event(contract, dict(factory(), h3_resolution=8))
+
+
+def test_density_window_must_be_ordered():
+    metric = dict(_density_metric(), window_end=_density_metric()["window_start"])
+    with pytest.raises(ContractValidationError, match="window_end"):
+        validate_event("density_metric", metric)
 
 
 def test_risk_event_rejects_unknown_coverage_mode():

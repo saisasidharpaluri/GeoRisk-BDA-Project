@@ -1,6 +1,6 @@
 # Executable validation suite
 
-Run `.venv\Scripts\python -m pytest -q` from `project/`. The suite covers:
+Run `.venv\Scripts\python -m pytest -q` from the repository root. The suite covers:
 
 - Contract validation for valid and invalid telemetry and hazard records.
 - H3 coverage cases for clearly inside, outside, and boundary-near coordinates.

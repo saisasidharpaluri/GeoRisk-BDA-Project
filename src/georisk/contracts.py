@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import math
+import re
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
 from functools import cache
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
+import h3
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError
 
@@ -21,14 +24,51 @@ SUPPORTED_CONTRACTS = frozenset(
 )
 FORMAT_CHECKER = FormatChecker()
 
+# RFC 3339 profile shared by every contract: uppercase ``T``, optional fraction,
+# and a UTC designator (``Z``, ``+00:00`` or ``-00:00``). Parsing is independent
+# of the Python version, unlike ``datetime.fromisoformat``.
+_UTC_TIMESTAMP = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]00:00)$"
+)
+
+
+def parse_utc_timestamp(value: object) -> datetime:
+    """Parse a strict RFC 3339 UTC timestamp into an aware ``datetime``.
+
+    Fractions beyond microseconds are truncated. Raises ``ValueError`` for any
+    other format, a non-UTC offset, or an impossible calendar value.
+    """
+    if not isinstance(value, str):
+        raise ValueError("timestamp must be a string")
+    match = _UTC_TIMESTAMP.fullmatch(value)
+    if match is None:
+        raise ValueError(f"timestamp must be RFC 3339 UTC (YYYY-MM-DDTHH:MM:SS[.f]Z): {value!r}")
+    year, month, day, hour, minute, second, fraction, _ = match.groups()
+    microsecond = int((fraction or "0").ljust(6, "0")[:6])
+    try:
+        return datetime(
+            int(year),
+            int(month),
+            int(day),
+            int(hour),
+            int(minute),
+            int(second),
+            microsecond,
+            tzinfo=timezone.utc,
+        )
+    except ValueError as exc:
+        raise ValueError(f"invalid timestamp: {value!r}") from exc
+
 
 @FORMAT_CHECKER.checks("date-time", raises=(TypeError, ValueError))
 def _is_utc_datetime(value: object) -> bool:
-    """Require an ISO-8601 timestamp with an explicit UTC offset."""
+    """Require a strict RFC 3339 timestamp with a UTC offset."""
     if not isinstance(value, str):
-        return False
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return parsed.tzinfo is not None and parsed.utcoffset() == timezone.utc.utcoffset(parsed)
+        # JSON Schema format assertions apply only to strings; the type keyword
+        # reports non-string values.
+        return True
+    parse_utc_timestamp(value)
+    return True
 
 
 class ContractValidationError(ValueError):
@@ -65,6 +105,38 @@ def _validator(contract: str) -> Draft202012Validator:
     return Draft202012Validator(load_schema(contract), format_checker=FORMAT_CHECKER)
 
 
+def _non_finite_paths(value: Any, path: str = "") -> Iterator[str]:
+    """Yield dotted paths of NaN or infinite floats, which JSON cannot represent."""
+    if isinstance(value, float) and not math.isfinite(value):
+        yield path or "<root>"
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            yield from _non_finite_paths(item, f"{path}.{key}" if path else str(key))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            yield from _non_finite_paths(item, f"{path}.{index}" if path else str(index))
+
+
+def _ring_errors(ring: list[list[float]], label: str) -> list[str]:
+    """Check closure, non-zero area, and antimeridian crossing for one linear ring."""
+    errors = []
+    if ring[0] != ring[-1]:
+        errors.append(f"{label}: ring is not closed")
+    if len({(position[0], position[1]) for position in ring}) < 3:
+        errors.append(f"{label}: ring needs at least three distinct positions")
+    else:
+        twice_area = sum(
+            a[0] * b[1] - b[0] * a[1] for a, b in zip(ring, ring[1:] + ring[:1], strict=True)
+        )
+        if twice_area == 0:
+            errors.append(f"{label}: ring has zero area")
+    if any(abs(b[0] - a[0]) > 180 for a, b in zip(ring, ring[1:], strict=False)):
+        errors.append(
+            f"{label}: ring crosses the antimeridian; split it into a MultiPolygon instead"
+        )
+    return errors
+
+
 def _semantic_errors(contract: str, event: Mapping[str, Any]) -> list[str]:
     """Check relationships after the event's JSON structure has been validated."""
     errors = []
@@ -72,19 +144,36 @@ def _semantic_errors(contract: str, event: Mapping[str, Any]) -> list[str]:
         geometry = event["geometry"]
         for index, coordinates in enumerate(geometry["coordinates"]):
             if geometry["type"] == "Polygon":
-                if coordinates[0] != coordinates[-1]:
-                    errors.append(f"geometry.coordinates[{index}]: ring is not closed")
+                errors.extend(_ring_errors(coordinates, f"geometry.coordinates[{index}]"))
             else:
                 for ring_index, ring in enumerate(coordinates):
-                    if ring[0] != ring[-1]:
-                        errors.append(
-                            f"geometry.coordinates[{index}][{ring_index}]: ring is not closed"
-                        )
-        valid_from = datetime.fromisoformat(event["valid_from"].replace("Z", "+00:00"))
-        valid_until = datetime.fromisoformat(event["valid_until"].replace("Z", "+00:00"))
-        if valid_until <= valid_from:
+                    errors.extend(
+                        _ring_errors(ring, f"geometry.coordinates[{index}][{ring_index}]")
+                    )
+        if parse_utc_timestamp(event["valid_until"]) <= parse_utc_timestamp(event["valid_from"]):
             errors.append("valid_until: must be after valid_from")
+    elif contract == "risk_event":
+        if event["risk_alert"] != bool(event["matching_hazards"]):
+            errors.append("risk_alert: must be true exactly when matching_hazards is non-empty")
+        errors.extend(_h3_errors(event["h3_index"], event["h3_resolution"]))
+        for index, match in enumerate(event["matching_hazards"]):
+            if parse_utc_timestamp(match["valid_until"]) <= parse_utc_timestamp(
+                match["valid_from"]
+            ):
+                errors.append(f"matching_hazards.{index}.valid_until: must be after valid_from")
+    elif contract == "density_metric":
+        if parse_utc_timestamp(event["window_end"]) <= parse_utc_timestamp(event["window_start"]):
+            errors.append("window_end: must be after window_start")
+        errors.extend(_h3_errors(event["h3_index"], event["h3_resolution"]))
     return errors
+
+
+def _h3_errors(cell: str, resolution: int) -> list[str]:
+    if not h3.is_valid_cell(cell):
+        return ["h3_index: must be a valid H3 cell"]
+    if h3.get_resolution(cell) != resolution:
+        return ["h3_index: resolution does not match h3_resolution"]
+    return []
 
 
 def validate_event(contract: str, event: Mapping[str, Any]) -> None:
@@ -94,10 +183,11 @@ def validate_event(contract: str, event: Mapping[str, Any]) -> None:
 
     validator = _validator(contract)
     errors = sorted(validator.iter_errors(dict(event)), key=lambda error: list(error.path))
-    if errors:
-        messages = [
-            f"{'.'.join(map(str, error.path)) or '<root>'}: {error.message}" for error in errors
-        ]
+    messages = [
+        f"{'.'.join(map(str, error.path)) or '<root>'}: {error.message}" for error in errors
+    ]
+    messages.extend(f"{path}: must be a finite number" for path in _non_finite_paths(event))
+    if messages:
         raise ContractValidationError(contract, messages)
     semantic_errors = _semantic_errors(contract, event)
     if semantic_errors:

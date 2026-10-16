@@ -284,7 +284,7 @@ def test_file_stream_publisher_writes_complete_files_only(tmp_path, monkeypatch)
         publisher("vessel-telemetry", events["telemetry"][0])
 
 
-def test_file_stream_failed_rename_leaves_only_hidden_batch(tmp_path, monkeypatch):
+def test_file_stream_failed_rename_leaves_no_partial_files(tmp_path, monkeypatch):
     from georisk.ingestion import file_stream
 
     def fail(*_):
@@ -295,7 +295,7 @@ def test_file_stream_failed_rename_leaves_only_hidden_batch(tmp_path, monkeypatc
     with pytest.raises(OSError, match="rename failed"):
         publisher("vessel-telemetry", generate_events(7, 1)["telemetry"][0])
     assert not list(tmp_path.rglob("*.jsonl"))
-    assert len(list(tmp_path.rglob(".part-*.tmp"))) == 1
+    assert not list(tmp_path.rglob(".part-*.tmp"))
 
 
 def test_replay_settings_from_env(tmp_path):
@@ -331,3 +331,45 @@ def test_file_stream_rejects_unknown_stream_and_reopening(tmp_path):
         with publisher:
             pytest.fail("closed publisher must not be reopened")
     assert not list(tmp_path.iterdir())
+
+
+def test_event_ids_are_unique_across_seeds_and_intervals():
+    from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
+
+    def ids(**kwargs):
+        config = ScenarioConfig(vessel_count=3, duration_minutes=30, **kwargs)
+        return {event["event_id"] for event in generate_scenario(config)["telemetry"]}
+
+    assert ids(seed=7) == ids(seed=7)
+    assert not ids(seed=7) & ids(seed=8)
+    five_minute, ten_minute = ids(seed=7, interval_seconds=300), ids(seed=7, interval_seconds=600)
+    # IDs name the (seed, vessel, instant) slot, so shared instants share an ID.
+    assert ten_minute < five_minute
+    assert all(event_id.startswith("telemetry-s7-") for event_id in five_minute)
+    alerts = generate_events(3, 0)["weather_alerts"]
+    assert all(alert["event_id"].startswith("alert-event-s3-") for alert in alerts)
+
+
+def test_replay_error_keeps_final_counters():
+    from georisk.ingestion.generator import ReplayError
+
+    events = generate_events(4, 1)
+
+    def fail(_stream, _event):
+        raise OSError("network unavailable")
+
+    with pytest.raises(ReplayError) as error:
+        replay_events(events, fail)
+    assert error.value.stats.generated == 5
+    assert error.value.stats.published == 0
+    assert error.value.stats.rejected == 5
+
+
+def test_write_jsonl_quarantines_non_finite_values_as_valid_json(tmp_path):
+    events = generate_events(5, 1)
+    events["telemetry"][0] = dict(events["telemetry"][0], latitude=float("nan"))
+    stats = write_jsonl(events, tmp_path)
+    assert stats.rejected == 1
+    for name in ("vessel-telemetry", "weather-alerts", "quarantine"):
+        for line in (tmp_path / f"{name}.jsonl").read_text().splitlines():
+            json.loads(line, parse_constant=lambda token: pytest.fail(token))

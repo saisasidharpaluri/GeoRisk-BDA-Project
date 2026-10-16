@@ -12,7 +12,7 @@ import h3
 
 from georisk.config import GeoRiskConfig
 from georisk.contracts import ContractValidationError, validate_event
-from georisk.ingestion.generator import generate_events
+from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.logging_utils import configure_logging
 from georisk.processing.h3_index import polygon_to_cells
 from georisk.processing.stream_job import _parse_utc, process_events
@@ -52,7 +52,10 @@ def compare_resolutions(
         )
         hazard_cells: set[str] = set()
         for alert in latest_alerts.values():
-            hazard_cells.update(polygon_to_cells(alert["geometry"], resolution, coverage_mode))
+            try:
+                hazard_cells.update(polygon_to_cells(alert["geometry"], resolution, coverage_mode))
+            except ValueError:
+                continue  # processing quarantines unusable geometry the same way
         alerted = [event for event in result["risk_events"] if event["risk_alert"]]
         density = result["density_metrics"]
         rows.append(
@@ -73,13 +76,20 @@ def compare_resolutions(
 
 
 def comparison_cli() -> None:
-    """Write a comparison report beside the configured pipeline report."""
+    """Write a comparison report beside the configured pipeline report.
+
+    Uses the same timed scenario as ``georisk compare-resolutions`` and
+    ``georisk run``, so both entry points write identical comparisons.
+    """
     settings = GeoRiskConfig.from_env()
     configure_logging(settings.log_level)
-    events = generate_events(
-        settings.seed,
-        settings.vessel_count,
-        telemetry_points=settings.telemetry_points,
+    events = generate_scenario(
+        ScenarioConfig(
+            seed=settings.seed,
+            vessel_count=settings.vessel_count,
+            duration_minutes=settings.scenario_duration_minutes,
+            interval_seconds=settings.telemetry_interval_seconds,
+        )
     )
     rows = compare_resolutions(
         events["telemetry"],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from georisk.route_dashboard.route_optimizer import (
 )
 from georisk.route_dashboard.views import (
     ROUTE_SCENARIOS,
+    _utc,
     active_alerts,
     compare_adjacent_windows,
     daily_history,
@@ -29,6 +31,7 @@ from georisk.route_dashboard.views import (
     latest_delay_estimates,
     latest_positions,
     latest_risk_by_vessel,
+    latest_timestamp,
     risk_table_rows,
     route_scenario_alerts,
     severity_distribution,
@@ -147,20 +150,26 @@ def load_dashboard_data(
 def dashboard_summary(
     data: dict[str, list[dict[str, Any]]], *, resolution: int = 7
 ) -> dict[str, Any]:
-    """Create metric values and freshness information for UI or API use."""
+    """Create metric values and freshness information for UI or API use.
+
+    ``active_alert_count`` counts alerts valid at the latest event time, using
+    the revision current at that time.
+    """
     risk_events = data.get("risk_events", [])
     latest_values = [
         row["event_time"]
         for row in (*data.get("telemetry", []), *risk_events)
         if row.get("event_time")
     ]
-    latest = max(latest_values) if latest_values else None
+    latest = latest_timestamp(latest_values)
+    alerts = data.get("weather_alerts", [])
     return {
         "simulated": True,
         "h3_resolution": resolution,
         "units": {"delay": "hours", "speed": "knots", "distance": "nm"},
         "telemetry_count": len(data.get("telemetry", [])),
-        "active_alert_count": len(data.get("weather_alerts", [])),
+        "alert_record_count": len(alerts),
+        "active_alert_count": len(active_alerts(alerts, latest)) if latest else 0,
         "risk_event_count": len(risk_events),
         "exposed_vessel_count": len(
             {row["vessel_id"] for row in risk_events if row.get("risk_alert")}
@@ -184,9 +193,9 @@ def dashboard_route(
 
     ``alerts`` replaces the loaded weather alerts, for what-if scenarios.
     """
-    if not data["telemetry"]:
+    at_time = latest_timestamp(event["event_time"] for event in data["telemetry"])
+    if at_time is None:
         return None
-    at_time = max(event["event_time"] for event in data["telemetry"])
     graph = score_graph(
         demonstration_graph(),
         demonstration_nodes(),
@@ -265,11 +274,13 @@ def _render_freshness(st: Any, metadata: dict[str, Any] | None, settings: GeoRis
                 "Run `georisk run` to create it.",
                 icon=":material/error:",
             )
+        lag = status["processing_lag_minutes"]
         rows = (
             ("Processed at", status["processed_at"]),
             ("Latest event", status["latest_event_time"]),
             ("Watermark", status["watermark"]),
             ("Age", f"{age:g} min" if age is not None else None),
+            ("Processing lag", f"{lag:g} min" if lag is not None else None),
         )
         st.html(
             '<dl class="gr-kv">'
@@ -476,20 +487,7 @@ def _render_risk_panel(st: Any, risk_events: list[dict[str, Any]], settings: Geo
     if not risk_events:
         st.info("No risk events yet. Run `georisk run` to process telemetry against hazard alerts.")
         return
-    distribution = severity_distribution(risk_events)
     chart_column, table_column = st.columns([1, 2.4], gap="large")
-    with chart_column:
-        st.bar_chart(
-            {
-                "Severity": [str(level) for level in range(1, 6)],
-                "Alerted positions": [distribution.get(level, 0) for level in range(1, 6)],
-            },
-            x="Severity",
-            y="Alerted positions",
-            color="#A8166F",
-            height=280,
-            sort=False,
-        )
     with table_column:
         hazard_types = sorted(
             {
@@ -498,7 +496,7 @@ def _render_risk_panel(st: Any, risk_events: list[dict[str, Any]], settings: Geo
                 for hazard in event.get("matching_hazards") or []
             }
         )
-        times = sorted({event["event_time"] for event in risk_events})
+        times = sorted({event["event_time"] for event in risk_events}, key=_utc)
         type_column, severity_column, time_column = st.columns([1.3, 1, 1.5])
         chosen_types = type_column.multiselect(
             "Hazard type",
@@ -562,6 +560,21 @@ def _render_risk_panel(st: Any, risk_events: list[dict[str, Any]], settings: Geo
                 "No alerted positions match these filters. Lower the minimum severity, "
                 "widen the time range, or clear the hazard types."
             )
+    # Rendered after the filters so the chart reflects the same selection as the table.
+    distribution = severity_distribution(filtered)
+    with chart_column:
+        st.bar_chart(
+            {
+                "Severity": [str(level) for level in range(1, 6)],
+                "Alerted positions": [distribution.get(level, 0) for level in range(1, 6)],
+            },
+            x="Severity",
+            y="Alerted positions",
+            color="#A8166F",
+            height=280,
+            sort=False,
+        )
+        st.caption("Counts follow the hazard, severity, and time filters.")
 
 
 def _window_label(rows: list[dict[str, Any]], window_start: str) -> str:
@@ -635,7 +648,10 @@ def _render_density_panel(
                 "change": st.column_config.NumberColumn("Change vs previous", format="%+d"),
             },
         )
-        st.caption("Blank neighbour columns mean the selected window is the first or last one.")
+        st.caption(
+            "Neighbours are the immediately preceding and following windows; a quiet "
+            "window shows 0 and a blank means it is outside the processed time range."
+        )
     return window
 
 
@@ -686,7 +702,13 @@ def _render_delay_panel(st: Any, estimates: list[dict[str, Any]]) -> None:
         "predicted_delay_hours",
         "baseline_delay_hours",
         "error_hours",
-    ] + (["synthetic_label_hours"] if show_truth else [])
+        *(["synthetic_label_hours"] if show_truth else []),
+        "hazard_severity",
+        "density",
+        "speed_knots",
+        "route_distance_nm",
+        "baseline_hours",
+    ]
     st.dataframe(
         latest_delay_estimates(estimates),
         width="stretch",
@@ -705,7 +727,20 @@ def _render_delay_panel(st: Any, estimates: list[dict[str, Any]]) -> None:
             "synthetic_label_hours": st.column_config.NumberColumn(
                 "Synthetic label (h)", format="%.2f"
             ),
+            "hazard_severity": st.column_config.NumberColumn("Hazard severity", format="%d"),
+            "density": st.column_config.NumberColumn("Cell density (vessels)", format="%d"),
+            "speed_knots": st.column_config.NumberColumn("Speed (kn)", format="%.1f"),
+            "route_distance_nm": st.column_config.NumberColumn(
+                "Distance to port (nm)", format="%.1f"
+            ),
+            "baseline_hours": st.column_config.NumberColumn(
+                "Sailing time (h)", format="%.2f", help="Distance ÷ speed."
+            ),
         },
+    )
+    st.caption(
+        "Feature columns are the model inputs for each vessel's latest estimate. "
+        "Distance is straight-line to Port B, not the selected route."
     )
 
 
@@ -773,28 +808,29 @@ def _render_route_panel(
     if route is None:
         st.info("No vessel telemetry is available for route scoring. Run `georisk run` first.")
         return
-    if route["route_changed"]:
+    if route.get("alternative") is None:
+        st.error(route["explanation"], icon=":material/block:")
+    elif route["route_changed"]:
         st.warning(route["explanation"], icon=":material/alt_route:")
     else:
         st.success(route["explanation"], icon=":material/check_circle:")
     penalty = route["risk_penalty"]
-    legs = {name: route[name] for name in ("baseline", "alternative")}
-    costs = {name: leg["travel_hours"] + penalty * leg["risk_score"] for name, leg in legs.items()}
+
+    def column(leg: dict[str, Any] | None) -> list[str]:
+        if leg is None:
+            return ["No eligible route", "—", "—", "—"]
+        return [
+            _path_label(leg["path"]),
+            f"{leg['travel_hours']:.2f}",
+            f"{leg['risk_score']:.2f}",
+            f"{leg['travel_hours'] + penalty * leg['risk_score']:.2f}",
+        ]
+
     st.table(
         {
             "": ["Path", "Travel time (h)", "Total risk", f"Total cost (h + {penalty:g} × risk)"],
-            "Baseline · fastest": [
-                _path_label(legs["baseline"]["path"]),
-                f"{legs['baseline']['travel_hours']:.2f}",
-                f"{legs['baseline']['risk_score']:.2f}",
-                f"{costs['baseline']:.2f}",
-            ],
-            "Alternative · risk-aware": [
-                _path_label(legs["alternative"]["path"]),
-                f"{legs['alternative']['travel_hours']:.2f}",
-                f"{legs['alternative']['risk_score']:.2f}",
-                f"{costs['alternative']:.2f}",
-            ],
+            "Baseline · fastest": column(route["baseline"]),
+            "Alternative · risk-aware": column(route.get("alternative")),
         },
         hide_index=True,
     )
@@ -819,11 +855,35 @@ def _render_route_panel(
     )
 
 
+def effective_settings(settings: GeoRiskConfig, metadata: dict[str, Any] | None) -> GeoRiskConfig:
+    """Prefer the processed run's H3 resolution, coverage mode, and window.
+
+    Outputs must be interpreted with the settings that produced them; using the
+    current environment instead would, for example, score routes against
+    density cells of another resolution. Invalid metadata falls back to
+    ``settings``.
+    """
+    if not metadata:
+        return settings
+    try:
+        return dataclasses.replace(
+            settings,
+            resolution=int(metadata.get("h3_resolution", settings.resolution)),
+            coverage_mode=str(metadata.get("coverage_mode", settings.coverage_mode)),
+            density_window_minutes=int(
+                metadata.get("window_minutes", settings.density_window_minutes)
+            ),
+        )
+    except (TypeError, ValueError):
+        return settings
+
+
 def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> None:
     """Render everything that depends on loaded data; reruns alone when auto-refreshing."""
     processed_dir = controls["processed_dir"]
     data = load_dashboard_data(input_dir=controls["input_dir"], processed_dir=processed_dir)
     metadata = load_run_metadata(processed_dir)
+    settings = effective_settings(settings, metadata)
     summary = dashboard_summary(data, resolution=settings.resolution)
 
     at_time = summary["latest_event_time"]
@@ -849,7 +909,7 @@ def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> 
         )
 
     scenario = controls["scenario"]
-    route_time = max((row["event_time"] for row in data["telemetry"]), default=at_time)
+    route_time = latest_timestamp(row["event_time"] for row in data["telemetry"]) or at_time
     scenario_alerts = (
         route_scenario_alerts(scenario, data["weather_alerts"], route_time) if route_time else []
     )

@@ -93,3 +93,30 @@ def test_latest_available_alert_revision_wins():
 def test_scoring_rejects_invalid_weights(kwargs):
     with pytest.raises(ValueError):
         scored(**kwargs)
+
+
+def test_edge_cells_fall_back_when_h3_cannot_trace_a_path(monkeypatch):
+    import h3
+
+    def unsupported(start, end):
+        raise h3.H3FailedError("path unsupported")
+
+    nodes = demonstration_nodes()
+    expected = edge_cells(nodes, "port_a", "chokepoint", 7)
+    monkeypatch.setattr(h3, "grid_path_cells", unsupported)
+    sampled = edge_cells(nodes, "port_a", "chokepoint", 7)
+    assert sampled[0] == expected[0] and sampled[-1] == expected[-1]
+    assert len(set(sampled)) == len(sampled)
+    assert set(expected) <= {cell for target in sampled for cell in h3.grid_disk(target, 1)}
+
+
+def test_density_of_another_resolution_is_rejected():
+    row = {
+        "window_start": "2026-01-01T12:00:00Z",
+        "window_end": "2026-01-01T12:15:00Z",
+        "h3_index": "88754e649bfffff",
+        "h3_resolution": 8,
+        "unique_vessel_count": 3,
+    }
+    with pytest.raises(ValueError, match="resolution 8"):
+        scored(density=[row])

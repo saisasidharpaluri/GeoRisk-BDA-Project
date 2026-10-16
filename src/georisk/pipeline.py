@@ -64,11 +64,12 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "coverage_mode": settings.coverage_mode,
             "window_minutes": settings.density_window_minutes,
             "allowed_lateness_minutes": settings.allowed_lateness_minutes,
+            "max_future_minutes": settings.max_future_minutes,
             "strict": settings.strict_validation,
         }
     )
     lake_paths = {
-        name: write_partitioned(records, settings.lake_dir, dataset_name=name)
+        name: write_partitioned(records, settings.lake_dir, dataset_name=name, replace_batch=True)
         for name, records in {
             "vessel_telemetry": events["telemetry"],
             "weather_alerts": events["weather_alerts"],
@@ -146,12 +147,13 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "synthetic_label_hours": row["delay_hours"],
             **{feature: row[feature] for feature in FEATURES},
         }
-        for index, (row, prediction) in enumerate(zip(all_rows, predictions, strict=False))
+        for index, (row, prediction) in enumerate(zip(all_rows, predictions, strict=True))
     ]
     lake_paths["delay_estimates"] = write_partitioned(
         estimates,
         settings.lake_dir,
         dataset_name="delay_estimates",
+        replace_batch=True,
     )
     estimates_path = settings.processed_dir / "delay-estimates.jsonl"
     estimates_path.write_text(
@@ -205,6 +207,7 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "coverage_mode": settings.coverage_mode,
             "window_minutes": settings.density_window_minutes,
             "allowed_lateness_minutes": settings.allowed_lateness_minutes,
+            "max_future_minutes": settings.max_future_minutes,
             "acceptance_required": settings.acceptance_required,
             "strict_validation": settings.strict_validation,
             "delay_noise_std_hours": settings.delay_noise_std_hours,

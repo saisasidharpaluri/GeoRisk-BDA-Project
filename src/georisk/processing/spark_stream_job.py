@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
@@ -12,6 +12,7 @@ from pyspark.sql.streaming import StreamingQuery
 
 from georisk.config import GeoRiskConfig
 from georisk.contracts import ContractValidationError, validate_event
+from georisk.processing.h3_index import polygon_to_cells
 from georisk.processing.spark_transforms import (
     TELEMETRY_SCHEMA,
     assign_h3,
@@ -22,31 +23,55 @@ from georisk.processing.spark_transforms import (
     split_valid,
     with_event_ts,
 )
-from georisk.processing.stream_job import _parse_utc, _quarantine_entry, _timestamp
+from georisk.processing.stream_job import (
+    MAX_FUTURE_MINUTES,
+    _parse_utc,
+    _quarantine_entry,
+    _timestamp,
+)
 
 
-def _alerts(spark: SparkSession, directory: Path) -> tuple[list[dict], list[dict]]:
-    """Collect the small static alert stream and quarantine invalid revisions."""
+def _alerts(
+    spark: SparkSession,
+    directory: Path,
+    resolution: int,
+    coverage_mode: str,
+) -> tuple[list[dict], list[dict]]:
+    """Collect the small alert stream in arrival order and quarantine bad revisions.
+
+    Rows are ordered by source file name (the replay publisher numbers files
+    sequentially) and then by position within the file, so equal-time
+    revision ties resolve the same way as in the local processor.
+    """
     if not any(directory.glob("*.jsonl")) and not any(directory.glob("*.json")):
         return [], []
     accepted, rejected = [], []
-    for row in read_alerts(spark, directory).collect():
+    rows = (
+        read_alerts(spark, directory)
+        .withColumn("_source_file", F.input_file_name())
+        .withColumn("_source_position", F.monotonically_increasing_id())
+        .orderBy("_source_file", "_source_position")
+        .drop("_source_position")
+        .collect()
+    )
+    for row in rows:
         record = row.asDict()
+        record.pop("_source_file", None)
         corrupt = record.pop("_corrupt_record", None)
+        reason = "contract_violation"
         try:
             if corrupt:
                 raise ValueError(f"invalid alert JSON: {corrupt}")
             record["geometry"] = json.loads(record["geometry"])
             validate_event("weather_alert", record)
+            reason = "invalid_geometry"
+            polygon_to_cells(record["geometry"], resolution, coverage_mode)
         except (ValueError, TypeError) as exc:
-            reason = (
-                "invalid_validity_range"
-                if (
-                    isinstance(exc, ContractValidationError)
-                    and "valid_until: must be after valid_from" in exc.errors
-                )
-                else "contract_violation"
-            )
+            if (
+                isinstance(exc, ContractValidationError)
+                and "valid_until: must be after valid_from" in exc.errors
+            ):
+                reason = "invalid_validity_range"
             rejected.append(_quarantine_entry("weather_alert", reason, record, exc))
         else:
             accepted.append(record)
@@ -67,15 +92,27 @@ def _unwritten(rows: DataFrame, risk_root: Path) -> DataFrame:
     return rows.join(existing, "event_id", "left_anti")
 
 
-def _write_alert_quarantine(root: Path, batch_id: int, rows: list[dict]) -> None:
-    """Use one replaceable file per batch so a retry does not duplicate rejections."""
+ALERT_QUARANTINE_FILE = "rejected-alerts.jsonl"
+
+
+def _write_alert_quarantine(root: Path, rows: list[dict]) -> None:
+    """Atomically replace the snapshot of currently rejected alerts.
+
+    Every microbatch re-reads the complete alert directory, so the rejected set
+    is a snapshot rather than a per-batch delta; replacing one file keeps each
+    rejected alert recorded exactly once across batches and retries.
+    """
     directory = root / "quarantine" / "alerts"
     directory.mkdir(parents=True, exist_ok=True)
-    temporary = directory / f".batch-{batch_id}.tmp"
+    temporary = directory / f".{ALERT_QUARANTINE_FILE}.tmp"
     temporary.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8"
+        "".join(
+            json.dumps(row, sort_keys=True) + "\n"
+            for row in sorted(rows, key=lambda item: json.dumps(item["record"], sort_keys=True))
+        ),
+        encoding="utf-8",
     )
-    temporary.replace(directory / f"batch-{batch_id}.jsonl")
+    temporary.replace(directory / ALERT_QUARANTINE_FILE)
 
 
 def _recompute_density(accepted: DataFrame, output: Path, window_minutes: int) -> None:
@@ -120,12 +157,21 @@ def run_stream(
     window_minutes: int = 15,
     available_now: bool = True,
     allowed_lateness_minutes: int | None = None,
+    max_future_minutes: int = MAX_FUTURE_MINUTES,
 ) -> StreamingQuery:
     """Start a local JSONL stream; callers await or stop the returned query.
 
     Use one writer and one persistent checkpoint per output root. Completed
     accepted-batch snapshots make retries after a partial sink write safe.
+    Telemetry later than ``max_future_minutes`` past the batch's wall-clock
+    time is quarantined so it cannot advance the persisted watermark.
     """
+    if (
+        not isinstance(max_future_minutes, int)
+        or isinstance(max_future_minutes, bool)
+        or max_future_minutes < 0
+    ):
+        raise ValueError("max_future_minutes must be a non-negative integer")
     lateness = (
         GeoRiskConfig.from_env().allowed_lateness_minutes
         if allowed_lateness_minutes is None
@@ -159,13 +205,21 @@ def run_stream(
             )
             snapshot = checkpoint / "georisk-batches" / str(batch_id) / "accepted"
             if not (snapshot / "_SUCCESS").exists():
-                alerts, rejected = _alerts(spark, alerts_dir)
-                _write_alert_quarantine(output, batch_id, rejected)
+                alerts, rejected = _alerts(spark, alerts_dir, resolution, coverage_mode)
+                _write_alert_quarantine(output, rejected)
                 distinct = valid.dropDuplicates(["event_id"]).withColumn(
                     "event_date",
                     F.date_format("event_ts", "yyyy-MM-dd"),
                 )
                 new = _unwritten(distinct, risk_root)
+                future_limit = datetime.now(timezone.utc) + timedelta(minutes=max_future_minutes)
+                new.filter(F.col("event_ts") > F.lit(future_limit)).withColumn(
+                    "reason",
+                    F.lit("future_event"),
+                ).write.mode("overwrite").json(
+                    str(output / "quarantine" / "future" / f"batch-{batch_id}"),
+                )
+                new = new.filter(F.col("event_ts") <= F.lit(future_limit))
                 previous = (
                     json.loads(watermark_path.read_text(encoding="utf-8")).get("max_event_time")
                     if watermark_path.exists()

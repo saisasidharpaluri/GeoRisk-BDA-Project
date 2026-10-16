@@ -7,18 +7,28 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from georisk.contracts import parse_utc_timestamp
 from georisk.geo_demo import DEMO_NODES
+from georisk.processing.stream_job import alert_revisions
 
 ROUTE_SCENARIOS = ("As generated", "No hazards", "Close inner lane")
 
 
 def _utc(value: str | datetime) -> datetime:
-    timestamp = (
-        datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
-    )
-    if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
+    if isinstance(value, str):
+        return parse_utc_timestamp(value)
+    if not isinstance(value, datetime) or value.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware")
-    return timestamp.astimezone(timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def latest_timestamp(values: Iterable[str]) -> str | None:
+    """Return the chronologically latest timestamp string, or ``None`` if empty.
+
+    Comparison uses parsed instants, so mixed ``Z``/``+00:00`` spellings and
+    fractional seconds order correctly.
+    """
+    return max(values, key=_utc, default=None)
 
 
 def _iso(value: datetime) -> str:
@@ -34,23 +44,18 @@ def _max_severity(event: Mapping[str, Any]) -> int:
 def active_alerts(
     alerts: Iterable[Mapping[str, Any]], at_time: str | datetime
 ) -> list[dict[str, Any]]:
-    """Return alerts valid at ``at_time`` (half-open), using each alert's latest revision.
+    """Return alerts valid at ``at_time`` (half-open) using the revision current then.
 
-    Revisions published after ``at_time`` are ignored, matching route scoring.
+    Uses the same as-of revision rule as processing and route scoring: a
+    revision applies from its issue time until the next revision, and the first
+    revision also covers earlier times.
     """
     timestamp = _utc(at_time)
-    latest: dict[str, Mapping[str, Any]] = {}
-    for alert in alerts:
-        if _utc(alert["event_time"]) > timestamp:
-            continue
-        previous = latest.get(alert["alert_id"])
-        if previous is None or _utc(alert["event_time"]) >= _utc(previous["event_time"]):
-            latest[alert["alert_id"]] = alert
     return sorted(
         (
-            dict(alert)
-            for alert in latest.values()
-            if _utc(alert["valid_from"]) <= timestamp < _utc(alert["valid_until"])
+            dict(revision.alert)
+            for revision in alert_revisions(alerts)
+            if revision.applies_at(timestamp)
         ),
         key=lambda alert: (-alert["severity"], alert["alert_id"]),
     )
@@ -114,25 +119,30 @@ def compare_adjacent_windows(
     density_metrics: Iterable[Mapping[str, Any]],
     window_start: str,
 ) -> list[dict[str, Any]]:
-    """Compare each cell's count with the previous and next windows.
+    """Compare each cell's count with the immediately preceding and following windows.
 
-    A neighbour that does not exist is ``None``; a cell absent from an existing
-    window counts as 0. Unknown windows return an empty list.
+    Neighbours are the calendar-adjacent windows of the same length, even when
+    they hold no rows (a quiet window counts as 0). A neighbour outside the
+    observed data range is ``None``. Unknown windows return an empty list.
     """
     rows = list(density_metrics)
-    windows = density_windows(rows)
-    if window_start not in windows:
+    current = [row for row in rows if row["window_start"] == window_start]
+    if not current:
         return []
-    index = windows.index(window_start)
+    start = _utc(window_start)
+    length = _utc(current[0]["window_end"]) - start
+    observed = [_utc(row["window_start"]) for row in rows]
+    first, last = min(observed), max(observed)
     neighbours = {
-        "previous": windows[index - 1] if index > 0 else None,
-        "current": window_start,
-        "next": windows[index + 1] if index + 1 < len(windows) else None,
+        "previous": start - length if start - length >= first else None,
+        "current": start,
+        "next": start + length if start + length <= last else None,
     }
     counts: dict[str, dict[str, int]] = {}
     for row in rows:
+        row_start = _utc(row["window_start"])
         for name, window in neighbours.items():
-            if window is not None and row["window_start"] == window:
+            if window is not None and row_start == window:
                 counts.setdefault(row["h3_index"], {})[name] = row["unique_vessel_count"]
     result = [
         {
@@ -167,7 +177,12 @@ def freshness(
     now: datetime,
     stale_after_minutes: int,
 ) -> dict[str, Any]:
-    """Classify the last processing run as ``fresh``, ``stale``, or ``unavailable``."""
+    """Classify the last processing run as ``fresh``, ``stale``, or ``unavailable``.
+
+    ``age_minutes`` is wall-clock time since processing. ``processing_lag_minutes``
+    is processing time minus the latest event time; seeded historical scenarios
+    therefore show a large lag even when the run itself is fresh.
+    """
     if (
         not isinstance(stale_after_minutes, int)
         or isinstance(stale_after_minutes, bool)
@@ -180,13 +195,24 @@ def freshness(
         "latest_event_time": metadata.get("latest_event_time"),
         "watermark": metadata.get("watermark"),
         "age_minutes": None,
+        "processing_lag_minutes": None,
         "state": "unavailable",
     }
     if not result["processed_at"]:
         return result
-    age = max(0.0, (_utc(now) - _utc(result["processed_at"])).total_seconds() / 60)
+    try:
+        processed_at = _utc(result["processed_at"])
+    except ValueError:
+        return result
+    age = max(0.0, (_utc(now) - processed_at).total_seconds() / 60)
     result["age_minutes"] = round(age, 1)
     result["state"] = "fresh" if age <= stale_after_minutes else "stale"
+    if result["latest_event_time"]:
+        try:
+            lag = (processed_at - _utc(result["latest_event_time"])).total_seconds() / 60
+        except ValueError:
+            lag = None
+        result["processing_lag_minutes"] = None if lag is None else round(lag, 1)
     return result
 
 
@@ -213,7 +239,7 @@ def risk_table_rows(risk_events: Iterable[Mapping[str, Any]]) -> list[dict[str, 
         }
         for event in risk_events
     ]
-    return sorted(rows, key=lambda row: (row["event_time"], row["vessel_id"]), reverse=True)
+    return sorted(rows, key=lambda row: (_utc(row["event_time"]), row["vessel_id"]), reverse=True)
 
 
 def latest_delay_estimates(estimates: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -227,6 +253,10 @@ def latest_delay_estimates(estimates: Iterable[Mapping[str, Any]]) -> list[dict[
             "error_hours": row["predicted_delay_hours"] - row["synthetic_label_hours"],
             "synthetic_label_hours": row["synthetic_label_hours"],
             "hazard_severity": row.get("hazard_severity"),
+            "density": row.get("density"),
+            "speed_knots": row.get("speed_knots"),
+            "route_distance_nm": row.get("route_distance_nm"),
+            "baseline_hours": row.get("baseline_hours"),
             "split": row.get("split"),
         }
         for row in latest_positions(estimates)
@@ -301,10 +331,11 @@ def lane_status(
     """Describe each scored lane: risk, its drivers, and whether it is open or blocked."""
     threshold = route["risk_threshold"]
 
-    def legs(path: list[str]) -> set[tuple[str, str]]:
+    def legs(leg: Mapping[str, Any] | None) -> set[tuple[str, str]]:
+        path = leg["path"] if leg else []
         return set(zip(path, path[1:], strict=False))
 
-    baseline, alternative = legs(route["baseline"]["path"]), legs(route["alternative"]["path"])
+    baseline, alternative = legs(route["baseline"]), legs(route.get("alternative"))
     rows = []
     for source, edges in sorted(edge_scores.items()):
         for edge in edges:

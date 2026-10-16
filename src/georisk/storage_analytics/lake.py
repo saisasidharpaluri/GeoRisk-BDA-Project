@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import date, datetime, timezone
+from datetime import date, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -14,7 +15,7 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
-from georisk.contracts import validate_event
+from georisk.contracts import parse_utc_timestamp, validate_event
 from georisk.storage_analytics.arrow_schemas import (
     ARROW_SCHEMAS,
     from_arrow_rows,
@@ -78,6 +79,12 @@ def _validate_records(records: Sequence[Mapping[str, Any]], dataset_name: str) -
         validate_event(contract, record)
 
 
+def _record_date(record: Mapping[str, Any], dataset_name: str) -> str:
+    """Return the UTC date that partitions one record."""
+    field = "window_start" if dataset_name == "density_metrics" else "event_time"
+    return parse_utc_timestamp(record[field]).astimezone(timezone.utc).date().isoformat()
+
+
 def _local_partition(root: Path, dataset_name: str, event_date: str) -> Path:
     return root / ZONE_BY_DATASET[dataset_name] / dataset_name / f"event_date={event_date}"
 
@@ -103,6 +110,12 @@ def write_dataset(
     materialized = [dict(record) for record in records]
     name = _dataset_name(materialized, dataset_name)
     _validate_records(materialized, name)
+    mismatched = sum(_record_date(record, name) != event_date for record in materialized)
+    if mismatched:
+        raise ValueError(
+            f"{mismatched} record(s) do not fall on event_date {event_date}; "
+            "use write_partitioned() to split rows by their UTC date"
+        )
     table = pa.Table.from_pylist(to_arrow_rows(name, materialized), schema=ARROW_SCHEMAS[name])
     parsed = urlparse(s3_uri)
 
@@ -119,20 +132,33 @@ def write_dataset(
         boto3.client("s3").put_object(Bucket=parsed.netloc, Key=key, Body=buffer.getvalue())
         return f"s3://{parsed.netloc}/{key}"
 
-    is_windows_path = (
-        len(parsed.scheme) == 1
-        and len(s3_uri) > 2
-        and s3_uri[1] == ":"
-        and s3_uri[2] in {"\\", "/"}
-    )
-    if parsed.scheme not in {"", "file"} and not is_windows_path:
-        raise ValueError("destination must be a local path, file:// URI, or s3:// URI")
-    root = Path(parsed.path if parsed.scheme == "file" else s3_uri)
+    root = _local_root(s3_uri)
     partition = _local_partition(root, name, event_date)
     partition.mkdir(parents=True, exist_ok=True)
     output = partition / f"part-{batch_id}.parquet"
-    pq.write_table(table, output, compression="snappy")
+    # Write to a hidden temporary file first: readers skip dot-files, and the
+    # final rename is atomic, so a crash never leaves a truncated part file.
+    temporary = partition / f".part-{batch_id}.parquet.tmp"
+    try:
+        pq.write_table(table, temporary, compression="snappy")
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
     return str(output)
+
+
+def _local_root(destination: str) -> Path:
+    """Resolve a local path or ``file://`` URI; reject other URI schemes."""
+    parsed = urlparse(destination)
+    is_windows_path = (
+        len(parsed.scheme) == 1
+        and len(destination) > 2
+        and destination[1] == ":"
+        and destination[2] in {"\\", "/"}
+    )
+    if parsed.scheme not in {"", "file"} and not is_windows_path:
+        raise ValueError("destination must be a local path, file:// URI, or s3:// URI")
+    return Path(parsed.path if parsed.scheme == "file" else destination)
 
 
 def write_partitioned(
@@ -141,27 +167,38 @@ def write_partitioned(
     *,
     dataset_name: str,
     batch_id: str = "00000",
+    replace_batch: bool = False,
 ) -> list[str]:
     """Write each row to its UTC date; replace the same batch in each partition.
 
-    Empty input writes no files. Other batches and dates are left untouched.
+    Empty input writes no files. Other batches are left untouched. By default
+    this batch's files in dates absent from ``records`` are also kept, which
+    suits incremental writers. ``replace_batch=True`` makes the call a full
+    snapshot of the batch: for local roots, this batch's files in every other
+    date partition of the dataset are removed, so a rerun that covers
+    different dates cannot leave stale rows behind.
     """
     if not isinstance(root, (str, Path)) or not str(root):
         raise ValueError("root must be a non-empty string or Path")
+    if not isinstance(replace_batch, bool):
+        raise TypeError("replace_batch must be a boolean")
     _validate_batch_id(batch_id)
     materialized = [dict(record) for record in records]
     name = _dataset_name(materialized, dataset_name)
     _validate_records(materialized, name)
-    timestamp_field = "window_start" if name == "density_metrics" else "event_time"
     partitions: dict[str, list[dict[str, Any]]] = {}
     for record in materialized:
-        timestamp = datetime.fromisoformat(record[timestamp_field].replace("Z", "+00:00"))
-        event_date = timestamp.astimezone(timezone.utc).date().isoformat()
-        partitions.setdefault(event_date, []).append(record)
-    return [
+        partitions.setdefault(_record_date(record, name), []).append(record)
+    written = [
         write_dataset(rows, root, event_date, dataset_name=name, batch_id=batch_id)
         for event_date, rows in sorted(partitions.items())
     ]
+    if replace_batch and urlparse(str(root)).scheme != "s3":
+        dataset_root = _local_root(str(root)) / ZONE_BY_DATASET[name] / name
+        for stale in dataset_root.glob(f"event_date=*/part-{batch_id}.parquet"):
+            if stale.parent.name.removeprefix("event_date=") not in partitions:
+                stale.unlink()
+    return written
 
 
 def read_dataset(root: str | Path, dataset_name: str) -> list[dict[str, Any]]:

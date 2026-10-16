@@ -12,7 +12,9 @@ Use a small, documented graph for the semester demonstration. Make travel cost a
 
 `route_optimizer.py` provides a deterministic graph, unrestricted fastest
 baseline, and threshold-filtered risk-aware alternative. Results include paths,
-travel hours, risk scores, total cost, deltas, and a `synthetic_demo` marker.
+travel hours, risk scores, total cost, deltas, top-level `blocked_edges`,
+`alternative_available`, and a `synthetic_demo` marker. Both `total_cost`
+values are `travel_hours + risk_penalty × risk_score`, so they are comparable.
 
 `dashboard.py` provides a local Streamlit UI and testable JSONL loaders. It
 shows telemetry, alert/risk counts, exposed vessels, density cells, freshness,
@@ -30,26 +32,42 @@ Coordinate with Member 3 on Athena query results and field names. Coordinate wit
 Route comparisons report all edges above the risk threshold, identify those on the baseline path, and explain the detour with travel-time and total-risk differences.
 
 `demonstration_nodes()` returns offshore Chennai coordinates. Each graph edge
-includes `distance_nm` and travel hours at 14 knots. An eligible fastest baseline
-is retained; when it is blocked, the alternative minimizes travel hours plus
-the configured risk penalty among eligible edges.
+includes `distance_nm` and travel hours at 14 knots. The baseline is always the
+unrestricted fastest path. When every edge it takes is within the threshold,
+the alternative equals it. Otherwise the alternative minimizes travel hours
+plus the configured risk penalty among eligible edges; blocking is checked per
+edge actually taken, so parallel edges are handled. The penalty therefore only
+shapes the alternative when the baseline uses a blocked lane. If no path avoids
+the blocked edges, `alternative` is `None`, `alternative_available` is false,
+`route_changed` is false, both deltas are `None`, and the explanation says so;
+the baseline is still reported and the dashboard shows "No eligible route". A
+destination unreachable even without restrictions raises `ValueError`.
 
 `edge_risk.score_graph()` scores a deep copy using the H3 grid path between each
-edge's coordinates. At the requested time it combines maximum active hazard
+edge's coordinates (`edge_cells()` falls back to sampling the straight segment
+where H3 cannot trace a path, such as near pentagons or over long edges). It
+raises `ValueError` when density rows use a different H3 resolution than the
+scoring resolution. At the requested time it combines maximum active hazard
 severity (70%) and maximum density in the containing window (30%, saturated at
 5 vessels). Empty data scores zero. Each edge includes `risk_detail` with the
-severity, contributing alert IDs, and density. Hazard revisions use the latest
-version available at that time; validity and density windows exclude their end.
+severity, contributing alert IDs, and density. Hazard revisions use the
+processor's as-of rule (the revision current at that time; the first revision
+also covers earlier times); validity and density windows exclude their end.
 The end-to-end pipeline uses these scores at the latest telemetry timestamp
 and persists both `route.at_time` and the scored graph in `route.edge_scores`.
 
 `dashboard_summary(data, resolution=7)` includes `simulated=True`, the configured
 `h3_resolution`, and units (delay in hours, speed in knots, distance in nm).
+`active_alert_count` counts alerts valid at the latest event time;
+`alert_record_count` counts all alert records. Latest times are compared as
+parsed timestamps, not strings.
 Pipeline acceptance requires these labels alongside the latest event timestamp.
 
 The dashboard reads `GeoRiskConfig.from_env()` for input/processed directories,
 H3 settings, route threshold, and risk penalty. Sidebar fields start from those
-values. `load_dashboard_data(root=None, input_dir=None, processed_dir=None)`
+values. `effective_settings()` then prefers the processed run's
+`run-metadata.json` `h3_resolution`, `coverage_mode`, and `window_minutes` for
+labels, route scoring, and the inspector, falling back to the configured values. `load_dashboard_data(root=None, input_dir=None, processed_dir=None)`
 lets explicit directories override the legacy `root/data` and `root/processed`
 layout. The pipeline and dashboard share `dashboard_route()`, scoring the same
 hazards and density at the latest telemetry timestamp with the selected penalty.
@@ -59,7 +77,7 @@ the subprocess environment. It launches the installed dashboard module with the
 current Python interpreter, so it also works outside the repository directory.
 
 `views.py` holds the dashboard's pure helpers, so the UI stays thin and every
-transformation is unit-tested: active alerts (latest revision, half-open
+transformation is unit-tested: active alerts (as-of revision, half-open
 validity), severity distribution, risk filters, density windows and adjacent
 window comparison, latest positions, delay summaries, route what-if alert sets,
 lane status, and run freshness. `GEORISK_STALE_AFTER_MINUTES` (default 30)
@@ -81,17 +99,20 @@ validity, and H3 cell count. No-data states are explicit.
 
 The KPI row shows active alerts at the latest event time, vessels exposed now
 (with an exposure sparkline), alerted positions, and the latest event time in
-UTC. The "Risk" tab charts alerted positions by severity and filters the risk
-table by hazard type, minimum severity (1–5), and event-time range; the table
-includes `coverage_mode` and `h3_resolution`.
+UTC. The "Risk" tab filters alerted positions by hazard type, minimum severity
+(1–5), and event-time range; both the severity chart and the risk table follow
+those filters, and the table includes `coverage_mode` and `h3_resolution`.
 
 The "Corridor density" tab selects a window (`select_slider`, defaulting to the
-latest), lists its busiest cells, and compares each cell with the previous and
-next windows. The map's extruded density layer shows the selected window.
+latest), lists its busiest cells, and compares each cell with the
+calendar-adjacent windows (start minus and plus the window length). A quiet
+neighbour shows 0; it is blank (`None`) only outside the processed time range.
+The map's extruded density layer shows the selected window.
 
 The "Delay" tab reads `processed/delay-estimates.jsonl` and shows each vessel's
 latest predicted delay, the mean baseline, and the error, all in hours, with
-model vs baseline MAE on held-out rows. "Demo mode: show synthetic ground
+model vs baseline MAE on held-out rows. Feature context columns show hazard
+severity, cell density, speed, distance to Port B, and sailing hours. "Demo mode: show synthetic ground
 truth" adds the synthetic label column. The panel is labelled as a synthetic
 demonstration and shows a no-data message when the file is missing.
 
@@ -106,7 +127,10 @@ drivers; the map's hazard and route layers follow the same scenario.
 The header reads "SIMULATED DATA · H3 res N · coverage: … · window: M min"
 from `run-metadata.json` (falling back to the configured settings). The
 "Data freshness" panel shows `processed_at`, latest event time, watermark, and
-age as fresh, stale (older than `GEORISK_STALE_AFTER_MINUTES`), or unavailable.
+wall-clock age since processing as fresh, stale (older than
+`GEORISK_STALE_AFTER_MINUTES`), or unavailable, so a new `georisk run` is fresh.
+"Processing lag" (`processing_lag_minutes`, processing time minus latest event
+time) is large for the seeded historical data.
 Metric labels carry their units. The sidebar toggle "Auto-refresh every 10 s"
 reruns the data-dependent body with `st.fragment(run_every=10)`; the directory
 fields sit in a collapsed "Data sources" expander.

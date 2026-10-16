@@ -20,6 +20,8 @@ class RouteResult:
     risk_score: float
     total_cost: float
     blocked_edges: tuple[tuple[str, str], ...]
+    # Risk of the exact edge taken for each leg; distinguishes parallel edges.
+    leg_risks: tuple[float, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -87,14 +89,17 @@ def _shortest_path(
     destination: str,
     risk_threshold: float | None,
     risk_penalty: float,
-) -> RouteResult:
-    queue: list[tuple[float, tuple[str, ...], float, float]] = [(0.0, (origin,), 0.0, 0.0)]
+) -> RouteResult | None:
+    """Dijkstra over ``travel_hours + risk_penalty * risk``; ``None`` if unreachable."""
+    queue: list[tuple[float, tuple[str, ...], float, float, tuple[float, ...]]] = [
+        (0.0, (origin,), 0.0, 0.0, ())
+    ]
     best: dict[str, float] = {origin: 0.0}
     while queue:
-        cost, path, travel, risk = heapq.heappop(queue)
+        cost, path, travel, risk, leg_risks = heapq.heappop(queue)
         current = path[-1]
         if current == destination:
-            return RouteResult(path, travel, risk, cost, ())
+            return RouteResult(path, travel, risk, cost, (), leg_risks)
         if cost > best.get(current, math.inf) + 1e-12:
             continue
         for edge in graph[current]:
@@ -113,9 +118,10 @@ def _shortest_path(
                         path + (target,),
                         travel + float(edge["travel_hours"]),
                         risk + edge_risk,
+                        leg_risks + (edge_risk,),
                     ),
                 )
-    raise ValueError(f"no eligible route from '{origin}' to '{destination}'")
+    return None
 
 
 def find_alternative_route(
@@ -130,71 +136,87 @@ def find_alternative_route(
 
     Edges above ``risk_threshold`` are unavailable to the alternative route.
     The baseline remains the fastest unrestricted route, making the comparison
-    explicit rather than silently changing the user's original route.
+    explicit rather than silently changing the user's original route. Both
+    ``total_cost`` values use ``travel_hours + risk_penalty * risk_score`` so
+    they are directly comparable.
+
+    When every path uses a blocked edge, ``alternative`` is ``None`` and the
+    baseline is still reported. A graph in which the destination is
+    unreachable even without restrictions raises ``ValueError``.
     """
     _validate_graph(graph)
     if origin not in graph or destination not in graph:
         raise ValueError("origin and destination must be graph nodes")
-    if not isinstance(risk_threshold, (int, float)) or not math.isfinite(risk_threshold):
+    if (
+        not isinstance(risk_threshold, (int, float))
+        or isinstance(risk_threshold, bool)
+        or not math.isfinite(risk_threshold)
+    ):
         raise ValueError("risk_threshold must be a finite number")
     if risk_penalty < 0 or not math.isfinite(risk_penalty):
         raise ValueError("risk_penalty must be a non-negative finite number")
-    baseline = _shortest_path(graph, origin, destination, None, 0.0)
+    fastest = _shortest_path(graph, origin, destination, None, 0.0)
+    if fastest is None:
+        raise ValueError(f"no route from '{origin}' to '{destination}'")
+    baseline = replace(fastest, total_cost=fastest.travel_hours + risk_penalty * fastest.risk_score)
     blocked = sorted(
-        (source, edge["to"])
-        for source, edges in graph.items()
-        for edge in edges
-        if float(edge["risk"]) > risk_threshold
+        {
+            (source, edge["to"])
+            for source, edges in graph.items()
+            for edge in edges
+            if float(edge["risk"]) > risk_threshold
+        }
     )
     baseline_blocked = [
-        (source, target)
-        for source, target in zip(baseline.path, baseline.path[1:], strict=False)
-        if (source, target) in blocked
+        ((source, target), leg_risk)
+        for source, target, leg_risk in zip(
+            baseline.path[:-1], baseline.path[1:], baseline.leg_risks, strict=True
+        )
+        if leg_risk > risk_threshold
     ]
+    alternative: RouteResult | None = baseline
     if baseline_blocked:
         alternative = _shortest_path(
             graph, origin, destination, float(risk_threshold), float(risk_penalty)
         )
-    else:
-        alternative = replace(
-            baseline, total_cost=baseline.travel_hours + risk_penalty * baseline.risk_score
-        )
-    alternative = replace(alternative, blocked_edges=tuple(blocked))
-    travel_delta = alternative.travel_hours - baseline.travel_hours
-    risk_delta = alternative.risk_score - baseline.risk_score
-    explanation = "Baseline route is within the risk threshold."
-    if baseline.path != alternative.path:
-        unavailable = ", ".join(
-            f"{source}→{target} ({float(edge['risk']):.2f})"
-            for source, target in baseline_blocked
-            for edge in graph[source]
-            if edge["to"] == target and float(edge["risk"]) > risk_threshold
-        )
-        if not unavailable:
-            unavailable = (
-                ", ".join(
-                    f"{source}→{edge['to']} ({float(edge['risk']):.2f})"
-                    for source, edges in sorted(graph.items())
-                    for edge in edges
-                    if float(edge["risk"]) > risk_threshold
-                )
-                or "none"
-            )
+    if alternative is not None:
+        alternative = replace(alternative, blocked_edges=tuple(blocked))
+    unavailable = ", ".join(
+        f"{source}→{target} ({leg_risk:.2f})" for (source, target), leg_risk in baseline_blocked
+    )
+    if alternative is None:
+        travel_delta = risk_delta = None
+        route_changed = False
         explanation = (
-            f"Edges above risk threshold {risk_threshold:.2f} were unavailable: {unavailable}. "
-            f"Alternative adds {travel_delta:+.1f} h and changes total risk by {risk_delta:+.2f}."
+            f"No route avoids lanes above risk threshold {risk_threshold:.2f}; "
+            f"the baseline uses {unavailable}. Raise the threshold to compare routes."
         )
+    else:
+        travel_delta = alternative.travel_hours - baseline.travel_hours
+        risk_delta = alternative.risk_score - baseline.risk_score
+        route_changed = baseline.path != alternative.path or baseline.leg_risks != (
+            alternative.leg_risks
+        )
+        explanation = "Baseline route is within the risk threshold."
+        if route_changed:
+            explanation = (
+                f"Edges above risk threshold {risk_threshold:.2f} were unavailable: "
+                f"{unavailable}. Alternative adds {travel_delta:+.1f} h and changes total "
+                f"risk by {risk_delta:+.2f}."
+            )
     return {
         "origin": origin,
         "destination": destination,
         "risk_threshold": float(risk_threshold),
         "risk_penalty": float(risk_penalty),
         "baseline": baseline.as_dict(),
-        "alternative": alternative.as_dict(),
-        "route_changed": baseline.path != alternative.path,
+        "alternative": None if alternative is None else alternative.as_dict(),
+        "alternative_available": alternative is not None,
+        "blocked_edges": [list(edge) for edge in blocked],
+        "route_changed": route_changed,
         "travel_hour_delta": travel_delta,
         "risk_delta": risk_delta,
-        "baseline_blocked_edges": [list(edge) for edge in baseline_blocked],
+        "baseline_blocked_edges": [list(edge) for edge, _ in baseline_blocked],
         "explanation": explanation,
         "synthetic_demo": True,
     }

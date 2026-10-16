@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -60,11 +60,13 @@ def _risk(vessel="v1", time="2026-01-01T12:00:00Z", hazards=(), cell="c1"):
     }
 
 
-def _density(cell, start, count):
+def _density(cell, start, count, minutes=15):
+    begin = datetime.fromisoformat(f"2026-01-01T{start}:00+00:00")
+    end = (begin + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
     return {
         "h3_index": cell,
         "window_start": f"2026-01-01T{start}:00Z",
-        "window_end": "unused",
+        "window_end": end,
         "unique_vessel_count": count,
     }
 
@@ -78,7 +80,18 @@ def test_active_alerts_half_open_and_latest_revision():
         _alert("H4", event_time="2026-01-01T12:40:00Z"),
     ]
     active = active_alerts(alerts, "2026-01-01T12:30:00Z")
-    assert [(alert["alert_id"], alert["severity"]) for alert in active] == [("H1", 5)]
+    # H4's only revision was issued at 12:40 but is valid from 12:00; the first
+    # revision covers earlier times, exactly as in processing.
+    assert [(alert["alert_id"], alert["severity"]) for alert in active] == [
+        ("H1", 5),
+        ("H4", 3),
+    ]
+    before_revision = active_alerts(alerts, "2026-01-01T12:10:00Z")
+    assert [(alert["alert_id"], alert["severity"]) for alert in before_revision] == [
+        ("H1", 3),
+        ("H2", 3),
+        ("H4", 3),
+    ]
     assert active_alerts([], "2026-01-01T12:30:00Z") == []
 
 
@@ -143,6 +156,12 @@ def test_compare_adjacent_windows():
     assert compare_adjacent_windows([], "2026-01-01T12:00:00Z") == []
 
 
+def test_compare_adjacent_windows_uses_calendar_neighbours_across_gaps():
+    rows = [_density("a", "12:00", 2), _density("a", "13:00", 4)]
+    later = compare_adjacent_windows(rows, "2026-01-01T13:00:00Z")
+    assert later == [{"h3_index": "a", "previous": 0, "current": 4, "next": None}]
+
+
 def test_latest_positions_last_row_per_vessel():
     telemetry = [
         {"vessel_id": "b", "event_time": "2026-01-01T12:05:00Z", "latitude": 1},
@@ -166,8 +185,11 @@ def test_freshness_states():
         "latest_event_time": "x",
         "watermark": "y",
         "age_minutes": 10.0,
+        "processing_lag_minutes": None,
         "state": "fresh",
     }
+    timed = dict(metadata, latest_event_time="2026-01-01T12:20:00Z")
+    assert freshness(timed, now, 30)["processing_lag_minutes"] == 30.0
     assert freshness(metadata, now, 5)["state"] == "stale"
     assert freshness(None, now, 30)["state"] == "unavailable"
     assert freshness({}, now, 30)["age_minutes"] is None

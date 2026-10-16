@@ -4,9 +4,9 @@ Measured on Windows 11 build 26300, Python 3.13.12, h3 4.5.0, pyarrow 21.0.0.
 The fresh default run used seed 7, ten vessels, 120 minutes sampled every five
 minutes, H3 resolution 7, overlap coverage, 15-minute windows, ten-minute
 lateness, a 20% evaluation split, and 0.25 h noise. Paths were isolated under
-`output/reports/phase10/` so old lake partitions could not inflate counts.
-The report is `output/reports/phase10/run.json`; the measurement summary is
-`output/reports/phase10/evaluation.json` (both ignored).
+`output/reports/evaluation/` so old lake partitions could not inflate counts.
+The report is `output/reports/evaluation/run.json` (ignored), produced by the
+reproduction commands below.
 
 ## Default run
 
@@ -31,6 +31,12 @@ events are current. AWS S3/Athena deployment was not tested.
 These are synthetic-label metrics, not real-world accuracy. The earlier Phase 7
 WSL GBT verification recorded MAE 0.2678 h versus 1.3487 h baseline; that is a
 separate model/runtime experiment, not the default run measured here.
+
+Update 2026-10-16: the route report's baseline `total_cost` now includes the
+risk penalty, so the default run reports 12.15 for the baseline versus 9.12
+for the alternative. Dashboard active alerts at 13:55 is 1 because H2 expired
+at 13:30. Model metrics are unchanged (MAE 0.193912 / baseline 1.348688) and
+all 17 acceptance checks pass.
 
 ## Resolution comparison
 
@@ -64,7 +70,8 @@ writes, model training, and rendering; validators had been warmed by the
 default run. It includes validation, coverage, matching, density, and sorting.
 This is one local observation, not a throughput guarantee.
 
-Reproduce from an activated `project/` environment in PowerShell (timings vary):
+Reproduce from the repository root in an activated PowerShell environment
+(timings vary):
 
 ```powershell
 georisk run --seed 7 --vessel-count 10 --duration-minutes 120 --interval-seconds 300 --delay-model linear --input-dir output/reports/evaluation/data --processed-dir output/reports/evaluation/processed --lake-dir output/reports/evaluation/lake --report-path output/reports/evaluation/run.json

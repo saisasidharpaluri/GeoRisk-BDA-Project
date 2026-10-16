@@ -163,15 +163,110 @@ def test_reissued_alert_replaces_earlier_version(reverse_order, monkeypatch):
     assert result["stats"]["alert_revisions_superseded"] == 1
     assert result["stats"]["alerts_in"] == 2
     assert result["quarantine"] == []
-    assert len(calls) == 1
+    assert len(calls) == 2
 
 
-def test_alert_revision_tie_keeps_later_input_for_whole_batch():
+def test_alert_revision_tie_keeps_later_input():
     first = _alert()
     latest = dict(_alert(center_latitude=14, center_longitude=80), event_id="revision-2")
     result = process_events([_telemetry("vessel", 12, 78, -1)], [first, latest])
     assert result["risk_events"][0]["risk_alert"] is False
     assert result["stats"]["alert_revisions_superseded"] == 1
+
+
+def test_alert_revision_applies_only_from_its_issue_time():
+    original = _alert(until_minutes=120)
+    moved = dict(
+        _alert(center_latitude=14, center_longitude=80, until_minutes=120),
+        event_id="revision-2",
+        event_time=_timestamp(60),
+    )
+    telemetry = [
+        _telemetry("before", 12, 78, 30),
+        _telemetry("after", 12, 78, 90),
+        _telemetry("moved", 14, 80, 90),
+    ]
+    for alerts in ([original, moved], [moved, original]):
+        flags = {
+            event["vessel_id"]: event["risk_alert"]
+            for event in process_events(telemetry, alerts)["risk_events"]
+        }
+        assert flags == {"before": True, "after": False, "moved": True}
+
+
+def test_first_revision_covers_telemetry_before_issue_time():
+    alert = dict(_alert(from_minutes=-30, until_minutes=60), event_time=_timestamp(10))
+    result = process_events([_telemetry("vessel", 12, 78)], [alert])
+    assert result["risk_events"][0]["risk_alert"] is True
+
+
+@pytest.mark.parametrize("coverage_mode", ["center", "overlap"])
+def test_alert_with_unusable_geometry_is_quarantined(monkeypatch, coverage_mode):
+    def reject(geometry, resolution, mode):
+        raise ValueError("invalid GeoJSON geometry: test")
+
+    monkeypatch.setattr(stream_job, "polygon_to_cells", reject)
+    result = process_events([_telemetry("vessel", 12, 78)], [_alert()], coverage_mode=coverage_mode)
+    assert [entry["reason"] for entry in result["quarantine"]] == ["invalid_geometry"]
+    assert result["risk_events"][0]["risk_alert"] is False
+    with pytest.raises(ValueError, match="invalid GeoJSON"):
+        process_events([], [_alert()], strict=True)
+
+
+def test_geometry_rejected_revision_keeps_previous_revision_active(monkeypatch):
+    original = _alert(until_minutes=120)
+    broken = dict(original, event_id="revision-2", event_time=_timestamp(30))
+    real = stream_job.polygon_to_cells
+
+    def reject_revision(geometry, resolution, mode):
+        if geometry is broken["geometry"]:
+            raise ValueError("invalid GeoJSON geometry: test")
+        return real(geometry, resolution, mode)
+
+    broken["geometry"] = {**original["geometry"]}
+    monkeypatch.setattr(stream_job, "polygon_to_cells", reject_revision)
+    result = process_events([_telemetry("vessel", 12, 78, 60)], [original, broken])
+    assert result["risk_events"][0]["risk_alert"] is True
+    assert result["stats"]["alert_revisions_superseded"] == 0
+
+
+def test_future_event_is_quarantined_without_advancing_watermark():
+    now = datetime(2026, 1, 1, 12, 40, tzinfo=UTC)
+    events = [
+        dict(_telemetry("future", 12, 78), event_time="2027-01-01T00:00:00Z"),
+        _telemetry("a", 12, 78, 31),
+        _telemetry("b", 12, 78, 32),
+    ]
+    result = process_events(events, [], now=now)
+    assert {event["vessel_id"] for event in result["risk_events"]} == {"a", "b"}
+    assert result["stats"]["future_dropped"] == 1
+    assert result["stats"]["late_dropped"] == 0
+    assert [entry["reason"] for entry in result["quarantine"]] == ["future_event"]
+    assert result["stats"]["max_event_time"] == _timestamp(32)
+
+
+def test_future_limit_is_inclusive_and_validated():
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    edge = _telemetry("edge", 12, 78, 60)
+    assert process_events([edge], [], now=now)["stats"]["future_dropped"] == 0
+    assert (
+        process_events([edge], [], now=now, max_future_minutes=59)["stats"]["future_dropped"] == 1
+    )
+    with pytest.raises(ValueError, match="max_future_minutes"):
+        process_events([], [], max_future_minutes=-1)
+    with pytest.raises(ValueError, match="now"):
+        process_events([], [], now=datetime(2026, 1, 1))
+
+
+def test_non_finite_telemetry_is_quarantined_as_valid_json(tmp_path):
+    event = dict(_telemetry("vessel", 12, 78), latitude=float("nan"))
+    result = run_streaming_job({"telemetry": [event], "output_dir": tmp_path})
+    assert result["risk_events"] == []
+    line = (tmp_path / "quarantine.jsonl").read_text(encoding="utf-8").strip()
+    assert (
+        json.loads(line, parse_constant=lambda name: pytest.fail(name))["record"]["latitude"]
+        == "nan"
+    )
 
 
 def test_invalid_revision_does_not_replace_valid_alert():
@@ -535,6 +630,7 @@ def test_runner_writes_run_metadata(tmp_path):
         "coverage_mode",
         "window_minutes",
         "allowed_lateness_minutes",
+        "max_future_minutes",
         "counts",
         "simulated",
     }

@@ -70,10 +70,56 @@ def test_graph_edges_have_distance_and_consistent_hours():
             assert edge["travel_hours"] == round(expected / DEMO_SPEED_KNOTS, 2)
 
 
-def test_route_rejects_invalid_graph_and_unreachable_alternative():
+def test_unreachable_alternative_keeps_baseline():
     graph = {"a": [{"to": "b", "travel_hours": 1, "risk": 0.9}], "b": []}
-    with pytest.raises(ValueError, match="no eligible route"):
-        find_alternative_route(graph, "a", "b", 0.5)
+    result = find_alternative_route(graph, "a", "b", 0.5, risk_penalty=2)
+    assert result["alternative"] is None
+    assert result["alternative_available"] is False
+    assert result["route_changed"] is False
+    assert result["baseline"]["path"] == ["a", "b"]
+    assert result["baseline"]["total_cost"] == pytest.approx(1 + 2 * 0.9)
+    assert result["baseline_blocked_edges"] == [["a", "b"]]
+    assert result["travel_hour_delta"] is None and result["risk_delta"] is None
+    assert "No route avoids" in result["explanation"]
+
+
+def test_route_costs_use_the_same_penalty():
+    graph = {
+        "a": [
+            {"to": "b", "travel_hours": 1, "risk": 0.9},
+            {"to": "c", "travel_hours": 1, "risk": 0},
+        ],
+        "b": [{"to": "d", "travel_hours": 1, "risk": 0.9}],
+        "c": [{"to": "d", "travel_hours": 2, "risk": 0.1}],
+        "d": [],
+    }
+    result = find_alternative_route(graph, "a", "d", 0.5, risk_penalty=4)
+    for leg in ("baseline", "alternative"):
+        route = result[leg]
+        assert route["total_cost"] == pytest.approx(route["travel_hours"] + 4 * route["risk_score"])
+    assert result["baseline"]["total_cost"] > result["alternative"]["total_cost"]
+
+
+def test_parallel_edges_report_only_the_edge_taken():
+    graph = {
+        "a": [
+            {"to": "b", "travel_hours": 1, "risk": 0.9},
+            {"to": "b", "travel_hours": 2, "risk": 0.1},
+        ],
+        "b": [],
+    }
+    fast = find_alternative_route(graph, "a", "b", 0.5)
+    assert fast["baseline_blocked_edges"] == [["a", "b"]]
+    assert fast["route_changed"] is True
+    assert fast["alternative"]["travel_hours"] == 2
+    swapped = {"a": list(reversed(graph["a"])), "b": []}
+    slow_first = find_alternative_route(swapped, "a", "b", 0.5)
+    assert slow_first["baseline"]["travel_hours"] == 1
+
+
+def test_route_rejects_invalid_graph_and_disconnected_destination():
+    with pytest.raises(ValueError, match="no route"):
+        find_alternative_route({"a": [], "b": []}, "a", "b", 0.5)
     with pytest.raises(ValueError, match="unknown node"):
         find_alternative_route(
             {"a": [{"to": "missing", "travel_hours": 1, "risk": 0.1}]}, "a", "a", 0.5
@@ -177,3 +223,61 @@ def test_dashboard_and_report_share_configured_route(tmp_path, penalty):
     assert route["alternative"]["total_cost"] == pytest.approx(
         route["alternative"]["travel_hours"] + penalty * route["alternative"]["risk_score"]
     )
+
+
+def test_summary_counts_only_alerts_active_at_latest_event():
+    def alert(alert_id, valid_until):
+        return {
+            "alert_id": alert_id,
+            "event_time": "2026-01-01T12:00:00Z",
+            "valid_from": "2026-01-01T12:00:00Z",
+            "valid_until": valid_until,
+            "severity": 3,
+            "hazard_type": "storm",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[81, 13], [81.1, 13], [81, 13.1], [81, 13]]],
+            },
+        }
+
+    data = {
+        "telemetry": [{"vessel_id": "v", "event_time": "2026-01-01T13:00:00Z"}],
+        "weather_alerts": [
+            alert("open", "2026-01-01T14:00:00Z"),
+            alert("expired", "2026-01-01T12:30:00Z"),
+        ],
+        "risk_events": [],
+        "density_metrics": [],
+    }
+    summary = dashboard_summary(data)
+    assert summary["active_alert_count"] == 1
+    assert summary["alert_record_count"] == 2
+
+
+def test_summary_orders_timestamps_chronologically():
+    data = {
+        "telemetry": [
+            {"vessel_id": "v", "event_time": "2026-01-01T12:00:00.5Z"},
+            {"vessel_id": "v", "event_time": "2026-01-01T12:00:00Z"},
+        ],
+        "weather_alerts": [],
+        "risk_events": [],
+        "density_metrics": [],
+    }
+    assert dashboard_summary(data)["latest_event_time"] == "2026-01-01T12:00:00.5Z"
+
+
+def test_effective_settings_follow_run_metadata():
+    from georisk.config import GeoRiskConfig
+    from georisk.route_dashboard.dashboard import effective_settings
+
+    settings = GeoRiskConfig()
+    metadata = {"h3_resolution": 8, "coverage_mode": "center", "window_minutes": 5}
+    effective = effective_settings(settings, metadata)
+    assert (effective.resolution, effective.coverage_mode, effective.density_window_minutes) == (
+        8,
+        "center",
+        5,
+    )
+    assert effective_settings(settings, None) is settings
+    assert effective_settings(settings, {"h3_resolution": 99}) is settings

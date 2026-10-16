@@ -259,3 +259,30 @@ def test_run_rejected_acceptance_exit_code_and_override(monkeypatch):
 def test_invalid_configuration_returns_error(capsys):
     assert cli.main(["generate", "--duration-minutes", "-1"]) == 1
     assert "GEORISK_SCENARIO_DURATION_MINUTES" in capsys.readouterr().err
+
+
+def test_replay_counts_malformed_lines_without_crashing(tmp_path, capsys):
+    inputs = tmp_path / "inputs"
+    assert cli.main(["generate", "--input-dir", str(inputs), "--vessels", "1"]) == 0
+    capsys.readouterr()
+    telemetry = inputs / "vessel-telemetry.jsonl"
+    telemetry.write_text(
+        telemetry.read_text(encoding="utf-8") + "{not json\n[1, 2]\n", encoding="utf-8"
+    )
+    status = cli.main(
+        [
+            "replay",
+            "--input-dir",
+            str(inputs),
+            "--stream-dir",
+            str(tmp_path / "stream"),
+            "--speed",
+            "0",
+        ]
+    )
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert status == 1
+    assert result["rejected"] == 2
+    assert result["published"] == result["generated"] - 2
+    assert captured.err.count("skipped malformed JSON object") == 2

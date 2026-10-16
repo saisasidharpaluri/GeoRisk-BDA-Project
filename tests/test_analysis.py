@@ -5,6 +5,7 @@ import h3
 from georisk.analysis import resolution_comparison
 from georisk.analysis.resolution_comparison import compare_resolutions
 from georisk.ingestion.generator import generate_events
+from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.processing.h3_index import polygon_to_cells
 from georisk.processing.stream_job import process_events
 
@@ -66,13 +67,16 @@ def test_comparison_cli_uses_configured_generator_and_report_directory(
     monkeypatch.setenv("GEORISK_REPORT_PATH", str(tmp_path / "reports" / "run.json"))
     monkeypatch.setenv("GEORISK_SEED", "11")
     monkeypatch.setenv("GEORISK_VESSEL_COUNT", "4")
-    monkeypatch.setenv("GEORISK_TELEMETRY_POINTS", "2")
+    monkeypatch.setenv("GEORISK_SCENARIO_DURATION_MINUTES", "30")
+    monkeypatch.setenv("GEORISK_TELEMETRY_INTERVAL_SECONDS", "600")
     monkeypatch.setenv("GEORISK_H3_COVERAGE_MODE", "center")
     monkeypatch.setattr(resolution_comparison, "configure_logging", lambda level: None)
     resolution_comparison.comparison_cli()
     rows = json.loads((tmp_path / "reports" / "resolution-comparison.json").read_text())
     assert json.loads(capsys.readouterr().out) == rows
-    events = generate_events(11, 4, telemetry_points=2)
+    events = generate_scenario(
+        ScenarioConfig(seed=11, vessel_count=4, duration_minutes=30, interval_seconds=600)
+    )
     expected = compare_resolutions(
         events["telemetry"], events["weather_alerts"], coverage_mode="center"
     )

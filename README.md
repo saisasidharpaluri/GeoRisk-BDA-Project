@@ -39,14 +39,17 @@ versions, including pyarrow 21.0.0.
 
 The shared contract validator is in `src/georisk/contracts.py`. It validates
 events against the versioned schemas before later ingestion and processing
-stages consume them.
+stages consume them. Timestamps must be strict RFC 3339 UTC
+(`YYYY-MM-DDTHH:MM:SS[.fraction]` ending in `Z`, `+00:00`, or `-00:00`), parsed
+identically on every supported Python version; NaN and infinite numbers are
+rejected.
 
 ## Spark setup (Phase 7)
 
 Use WSL2 Ubuntu on Windows. Spark's native Windows Hadoop helpers can be
 blocked by Application Control. Keep the Windows `.venv` separate from the
 Linux `.venv-spark` environment. Install Python 3.11 and Java 17 in Ubuntu,
-then run from `project/` in WSL:
+then run from the repository root in WSL:
 
 ```bash
 python3.11 -m venv .venv-spark
@@ -56,8 +59,9 @@ export PYSPARK_PYTHON="$PWD/.venv-spark/bin/python"
 python -m pytest -m spark -q
 ```
 
-The isolated runtime prepared on this workstation lives in `.runtime-spark/`.
-To use it in a fresh WSL shell, run:
+Optionally, keep a private Java runtime in an untracked `.runtime-spark/`
+directory (create it yourself; it is not part of the repository). To use it
+in a fresh WSL shell, run:
 
 ```bash
 export JAVA_HOME="$PWD/.runtime-spark/java"
@@ -68,7 +72,8 @@ source .venv-spark/bin/activate
 
 `get_spark()` imports PySpark only when requested and uses UTC, four shuffle
 partitions, and a disabled Spark UI. Spark tests skip when PySpark or Java is
-missing; runtime errors are test failures. The Spark extra stays on 3.5.x.
+missing; runtime errors are test failures. The Spark extra stays on 3.5.x and
+is verified on Python 3.11 with Java 17; it is expected to work on 3.10+.
 [AWS Glue release notes](https://docs.aws.amazon.com/glue/latest/dg/release-notes.html)
 currently list Glue 5.1 (Spark 3.5.6, Python 3.11, Java 17); these local
 prerequisites also match Glue 5.0. No AWS deployment is performed.
@@ -96,8 +101,11 @@ georisk process --input-dir output/data --output-dir output/processed --resoluti
 ```
 
 The processor writes `risk-events.jsonl` and `density-metrics.jsonl`. It
-expires alerts using `valid_until`, retains the H3 resolution in every row,
-and deduplicates vessels by H3 cell and 15-minute event-time window.
+expires alerts using `valid_until`, applies each alert revision only from its
+issue time onward, retains the H3 resolution in every row, and deduplicates
+vessels by H3 cell and 15-minute event-time window. Telemetry more than
+`GEORISK_MAX_FUTURE_MINUTES` (default 60) ahead of the current time is
+quarantined as `future_event`.
 
 ## Phase 4 storage and analytics
 
@@ -110,8 +118,11 @@ georisk run --lake-dir output/lake
 
 Datasets use the layout
 `output/lake/<zone>/<dataset>/event_date=YYYY-MM-DD/part-<batch_id>.parquet`,
-with telemetry and alerts in `raw`, and risk and density in `curated`.
-Use `write_partitioned()` to assign each row to its own UTC date. The lake helpers provide
+with telemetry and alerts in `raw`, and risk, density, and delay estimates in
+`curated`. Use `write_partitioned()` to assign each row to its own UTC date;
+`georisk run` passes `replace_batch=True` so a rerun removes its earlier files
+from dates no longer present. Local files are written to a hidden temporary
+file and atomically renamed. The lake helpers provide
 validated writes, reads, risk summaries, and density summaries. Athena query
 examples are in `src/georisk/storage_analytics/sql/`.
 
@@ -126,7 +137,9 @@ georisk dashboard
 
 The dashboard displays freshness and explicit no-data states. Its route view
 compares the unrestricted fastest path with a threshold-filtered alternative
-on the documented synthetic graph.
+on the documented synthetic graph. Both total costs include the risk penalty;
+when no path avoids the blocked lanes, the baseline remains and the
+alternative shows "No eligible route".
 
 ## Phase 6 end-to-end run
 
@@ -173,8 +186,9 @@ and explained detours. Overlap mode additionally checks a boundary cell missed
 by center containment. Every expected `scenario_*` check must be present and
 pass. `dashboard_labels` checks simulation status, H3 resolution, and units;
 existing checks cover timestamps, Parquet outputs, and held-out model metrics.
-The guide's S3/Athena criterion is covered locally by Parquet/SQL tests; AWS
-deployment verification remains outside the local acceptance suite.
+The guide's S3/Athena criterion is not met: local Parquet and DuckDB SQL tests
+cover query semantics only, and Athena acceptance remains unmet until the AWS
+path is deployed and verified (out of scope for the local suite).
 
 ## Unified local CLI
 
@@ -210,7 +224,10 @@ Commands return 0 on success, 1 for rejected acceptance or operational errors,
 2 for argparse usage errors, and 130 when interrupted. Dashboard propagates
 Streamlit's exit status. `--no-acceptance-required` permits a run with rejected
 acceptance to exit 0; validation still exits 1. Existing `georisk-run`,
-`georisk-validate`, and `georisk-compare-resolutions` entry points remain available.
+`georisk-validate`, and `georisk-compare-resolutions` entry points remain available;
+the last uses the same timed scenario as `georisk compare-resolutions`.
+`georisk replay` skips malformed JSON lines, reports them on stderr, and counts
+them as generated and rejected, so the command exits 1.
 
 ## Phase 8 deployment readiness
 

@@ -204,7 +204,9 @@ def route_layer(
             ("baseline", BASELINE_SLATE, 7),
             ("alternative", ALTERNATIVE_GREEN, 4),
         ):
-            leg = route[name]
+            leg = route.get(name)
+            if leg is None:
+                continue
             data.append(
                 {
                     "name": name,
