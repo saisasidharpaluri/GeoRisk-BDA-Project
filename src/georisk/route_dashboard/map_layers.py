@@ -8,7 +8,8 @@ from typing import Any
 
 import pydeck as pdk
 
-from georisk.geo_demo import DEMO_BBOX
+from georisk.geo_demo import DEMO_NODES
+from georisk.route_dashboard.views import format_time
 
 # Nautical-chart palette shared with theme.toml: magenta marks hazards as on
 # paper charts, navy ink marks traffic, buoy green marks the safe passage.
@@ -24,8 +25,8 @@ PAPER = [242, 245, 244]
 NODE_LABELS = {
     "port_a": "Port A",
     "port_b": "Port B",
-    "chokepoint": "Inner lane",
-    "outer_lane": "Outer lane",
+    "chokepoint": "Chokepoint",
+    "outer_lane": "Outer waypoint",
 }
 
 
@@ -45,22 +46,26 @@ def vessels_layer(
     positions: Iterable[Mapping[str, Any]],
     alerted_vessel_ids: Iterable[str],
 ) -> pdk.Layer:
-    """Latest vessel positions; vessels inside an active hazard are red."""
+    """Latest vessel positions; vessels inside an active hazard are larger and red."""
     alerted = set(alerted_vessel_ids)
     data = []
     for row in positions:
         is_alerted = row["vessel_id"] in alerted
+        speed, heading = row.get("speed_knots"), row.get("heading_deg")
         data.append(
             {
                 "vessel_id": row["vessel_id"],
                 "position": [row["longitude"], row["latitude"]],
                 "alerted": is_alerted,
+                "radius": 9 if is_alerted else 6,
                 "color": (ALERT_RED if is_alerted else INK) + [235],
                 "tooltip": _tooltip(
                     row["vessel_id"],
-                    "In active hazard" if is_alerted else "Clear of hazards",
-                    f"{row.get('speed_knots', '?')} kn · heading {row.get('heading_deg', '?')}°",
-                    f"{row['event_time']} UTC",
+                    "Inside an active hazard" if is_alerted else "Clear of active hazards",
+                    f"{speed:.1f} kn · heading {heading:.0f}°"
+                    if isinstance(speed, (int, float)) and isinstance(heading, (int, float))
+                    else "Speed and heading unavailable",
+                    f"Last report {format_time(row['event_time'])} UTC",
                 ),
             }
         )
@@ -74,7 +79,7 @@ def vessels_layer(
         get_position="position",
         get_fill_color="color",
         get_line_color=PAPER + [255],
-        get_radius=6,
+        get_radius="radius",
         radius_units="'pixels'",
         line_width_min_pixels=1.5,
     )
@@ -98,7 +103,8 @@ def hazards_layer(active_alerts: Iterable[Mapping[str, Any]]) -> pdk.Layer:
                     "tooltip": _tooltip(
                         f"{alert['alert_id']} · {alert['hazard_type'].replace('_', ' ')}",
                         f"Severity {alert['severity']} of 5",
-                        f"Valid {alert['valid_from']} → {alert['valid_until']}",
+                        f"Valid {format_time(alert['valid_from'])}–"
+                        f"{format_time(alert['valid_until'])} UTC",
                     ),
                 }
             )
@@ -117,7 +123,7 @@ def hazards_layer(active_alerts: Iterable[Mapping[str, Any]]) -> pdk.Layer:
 
 
 def risk_cells_layer(risk_events: Iterable[Mapping[str, Any]]) -> pdk.Layer:
-    """H3 cells where at least one position matched an active hazard."""
+    """H3 cells where at least one position matched an active hazard during the run."""
     cells: dict[str, dict[str, Any]] = {}
     for event in risk_events:
         if not event.get("risk_alert"):
@@ -138,9 +144,10 @@ def risk_cells_layer(risk_events: Iterable[Mapping[str, Any]]) -> pdk.Layer:
             "severity": cell["severity"],
             "fill": CHART_MAGENTA + [60 + 25 * cell["severity"]],
             "tooltip": _tooltip(
-                f"Risk cell {h3_index}",
-                f"{cell['events']} alerted positions",
-                f"{len(cell['vessels'])} vessels · max severity {cell['severity']}",
+                "Alerted H3 cell (whole scenario)",
+                h3_index,
+                f"{cell['events']} alerted positions from {len(cell['vessels'])} vessels",
+                f"Highest hazard severity {cell['severity']}",
             ),
         }
         for h3_index, cell in sorted(cells.items())
@@ -171,9 +178,10 @@ def density_layer(rows: Iterable[Mapping[str, Any]]) -> pdk.Layer:
             "elevation": row["unique_vessel_count"] * 200,
             "fill": _ramp(row["unique_vessel_count"] / peak, 170),
             "tooltip": _tooltip(
-                f"Density cell {row['h3_index']}",
                 f"{row['unique_vessel_count']} unique vessels",
-                f"Window {row['window_start']} → {row.get('window_end', '?')}",
+                row["h3_index"],
+                f"Window {format_time(row['window_start'])}–"
+                f"{format_time(row.get('window_end'))} UTC",
             ),
         }
         for row in rows
@@ -214,9 +222,11 @@ def route_layer(
                     "color": color + [230],
                     "width": width,
                     "tooltip": _tooltip(
-                        f"{name.title()} route",
+                        "Baseline route (fastest)"
+                        if name == "baseline"
+                        else "Alternative route (risk-aware)",
                         " → ".join(NODE_LABELS.get(n, n) for n in leg["path"]),
-                        f"{leg['travel_hours']:.2f} h · risk {leg['risk_score']:.2f}",
+                        f"{leg['travel_hours']:.2f} h sailing · total risk {leg['risk_score']:.2f}",
                     ),
                 }
             )
@@ -280,10 +290,13 @@ def node_layers(nodes: Mapping[str, tuple[float, float]]) -> list[pdk.Layer]:
 
 def build_deck(layers: Iterable[pdk.Layer], *, pitch: float = 30) -> pdk.Deck:
     """Frame the demo bounding box off Chennai with one shared HTML tooltip."""
+    lats = [lat for lat, _ in DEMO_NODES.values()]
+    lons = [lon for _, lon in DEMO_NODES.values()]
     view = pdk.ViewState(
-        latitude=(DEMO_BBOX["lat_min"] + DEMO_BBOX["lat_max"]) / 2,
-        longitude=(DEMO_BBOX["lon_min"] + DEMO_BBOX["lon_max"]) / 2,
-        zoom=7.9,
+        # Centre on the route network, which sits in the northern half of the box.
+        latitude=(min(lats) + max(lats)) / 2,
+        longitude=(min(lons) + max(lons)) / 2,
+        zoom=8.0,
         pitch=pitch,
         bearing=0,
     )

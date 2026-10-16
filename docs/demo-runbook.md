@@ -49,34 +49,41 @@ PySpark/Java are installed; it is not a live JSONL dashboard feed.
 
 ## Presentation sequence and clicks
 
-1. Show the SIMULATED DATA badge, H3 resolution, overlap mode, window, and Data
-   freshness panel. Right after `georisk run` the run shows Fresh (wall-clock
-   age since processing). January 2026 event times are intentionally
-   historical, so Processing lag (processing time minus latest event) is large.
-2. On Live map, toggle Vessels, Hazard zones, Risk cells, Corridor density, and
-   Routes in the sidebar. Use Inspect vessel and Inspect alert, or click a
-   plotted object, to show identity, validity, severity, and position.
-3. Open Risk summary, select a hazard type, raise Minimum severity, and narrow
-   the event-time range. Show how the table changes. The named acceptance
-   checks demonstrate inside/outside and expired-hazard behavior; map hazards
-   reflect the latest event time, not animated playback of each arrival.
-4. On Corridor density, change Window (UTC); compare previous/current/next
-   counts (a quiet adjacent window shows 0; blank only outside the processed
-   range) and the map extrusion. Explain that repeated messages do not increase
-   unique-vessel counts and a vessel may occupy several cells during a window.
-5. On Delay estimates, compare Model MAE (h) and Baseline MAE (h). Toggle
-   Demo mode: show synthetic ground truth and explain the synthetic formula.
-6. Under sidebar Route what-if, choose No hazards, then Close inner lane.
-   Inspect the Route comparison table, blocked lanes, explanation, and redraw.
-   Set Route risk threshold to 1.0 to show the baseline retained. A threshold
-   near 0 blocks every path: the baseline stays and the alternative reads "No
-   eligible route". Return to As generated and 0.5 afterward.
-7. Expand History for daily local Parquet totals. Show the resolution comparison
-   JSON and explain the coverage/detail trade-off. Local Parquet and DuckDB
-   tests show query semantics only; the guide's S3/Athena step remains unmet
-   because AWS is undeployed.
-8. Toggle Auto-refresh every 10 s to demonstrate rereading snapshots. Stop
-   Streamlit with Ctrl+C in its terminal when finished.
+The sidebar's "Presenter guide" lists the same steps.
+
+1. **Header and pipeline strip.** Point out the SIMULATED DATA badge, the
+   scenario time span, H3 resolution and cell size, and coverage mode. Walk the
+   five pipeline cards left to right: ingest → H3 index → risk match → density
+   → analytics. Data freshness shows Fresh right after `georisk run`; the large
+   processing lag is explained in the panel (seeded January 2026 data).
+2. **KPIs and Live map.** The KPIs describe the latest report (13:55 UTC in
+   the default run) and the whole scenario. On the map, red vessels are inside
+   an active hazard, magenta hexagons are cells alerted at any time, and blue
+   columns are the selected density window. Toggle layers in the sidebar, then
+   click a vessel or hazard zone to show its Inspect card.
+3. **Hazard exposure.** Show the vessels-in-hazard timeline, then select a
+   hazard type, raise Minimum severity, and narrow the time range; the severity
+   chart and table follow the filters. The acceptance scenarios (Run quality)
+   cover inside/outside and expired-hazard behaviour.
+4. **Corridor density.** Explain unique vessels per cell and window, move the
+   Window slider, and show that the map's columns follow it. Compare the
+   previous/next windows (a quiet window shows 0; blank only outside the
+   processed range).
+5. **Delay model.** Compare Model MAE (h) with Baseline MAE (h) and the error
+   reduction. Use the scatter and its diagonal to explain that the remaining
+   error is the label noise; show the formula, then toggle "Demo mode: show
+   synthetic ground truth".
+6. **Route decision.** In the sidebar Route what-if, choose No hazards, then
+   Close inner lane, and compare the baseline and alternative cards and the
+   lane table. Set the threshold to 1.0 to keep the baseline; a threshold near
+   0 blocks every path and shows "No eligible route". Return to As generated
+   and 0.5 afterwards.
+7. **Run quality.** Show "17 of 17 acceptance checks passed", the record
+   accounting, the settings used, and History. Mention the resolution
+   comparison JSON and that local Parquet/DuckDB tests show query semantics
+   only; the guide's S3/Athena step remains unmet because AWS is undeployed.
+8. Optionally toggle Auto-refresh every 10 s to show snapshots being reread.
+   Stop Streamlit with Ctrl+C when finished.
 
 For missing-data states, first check input/processed paths in `.env` and the
 shell. Use `georisk run` to rebuild outputs, then validate before presenting.

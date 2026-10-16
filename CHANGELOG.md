@@ -12,6 +12,20 @@
   CI for Python 3.10–3.13 plus a Python 3.11/Java 17 Spark job.
 - An 85% statement-coverage gate, omitting the AWS deployment module only.
 
+### Changed (dashboard presentation, 2026-10-16)
+
+- Dashboard reorganised for presentation: header with a plain-language summary
+  and scenario badges, a five-stage pipeline strip with this run's counts,
+  time-scoped KPI cards including the route decision, readable Inspect cards
+  instead of raw JSON, and tabs for hazard exposure, corridor density, delay
+  model, route decision, and run quality (acceptance checks, record
+  accounting, settings, history).
+- Chart axes are labelled in UTC; previously the browser shifted them into
+  the viewer's local time zone while the axis said UTC.
+- New charts: vessels-in-hazard timeline, density trend, and a
+  prediction-vs-label scatter with a reference diagonal. Route results show
+  map labels instead of node IDs; the map centres on the route network.
+
 ### Fixed (2026-10-16 audit, see `PROJECT_AUDIT.md`)
 
 - Contracts reject NaN/infinite numbers and accept only strict RFC 3339 UTC

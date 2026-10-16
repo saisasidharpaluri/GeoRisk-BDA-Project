@@ -364,3 +364,93 @@ def test_stale_after_minutes_setting():
     assert GeoRiskConfig.from_env({"GEORISK_STALE_AFTER_MINUTES": "5"}).stale_after_minutes == 5
     with pytest.raises(ValueError, match="GEORISK_STALE_AFTER_MINUTES"):
         GeoRiskConfig.from_env({"GEORISK_STALE_AFTER_MINUTES": "0"})
+
+
+def test_time_formatting_is_utc_and_tolerant():
+    from georisk.route_dashboard.views import chart_time_labels, format_datetime, format_time
+
+    assert format_time("2026-01-01T13:55:00Z") == "13:55"
+    assert format_time("2026-01-01T13:55:00+00:00") == "13:55"
+    assert format_time(None) == format_time("not a time") == "—"
+    assert format_datetime("2026-01-01T13:55:00Z") == "1 Jan 2026, 13:55 UTC"
+    assert chart_time_labels(["2026-01-01T12:00:00Z", "2026-01-01T12:15:00Z"]) == [
+        "12:00",
+        "12:15",
+    ]
+    assert chart_time_labels(["2026-01-01T23:45:00Z", "2026-01-02T00:00:00Z"]) == [
+        "01-01 23:45",
+        "01-02 00:00",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("minutes", "text"),
+    [(None, "—"), (0.4, "<1 min"), (12.3, "12 min"), (125, "2 h 05 min"), (414548, "288 days")],
+)
+def test_humanize_minutes(minutes, text):
+    from georisk.route_dashboard.views import humanize_minutes
+
+    assert humanize_minutes(minutes) == text
+
+
+def test_alert_status_and_vessels_inside():
+    from georisk.route_dashboard.views import alert_status, vessels_inside
+
+    alert = _alert(valid_from="2026-01-01T12:00:00Z", valid_until="2026-01-01T13:00:00Z")
+    assert alert_status(alert, "2026-01-01T11:30:00Z") == {"state": "upcoming", "minutes": 30.0}
+    assert alert_status(alert, "2026-01-01T12:45:00Z") == {"state": "active", "minutes": 15.0}
+    assert alert_status(alert, "2026-01-01T13:00:00Z") == {"state": "expired", "minutes": 0.0}
+    latest = {
+        "a": _risk("a", hazards=[("storm", 4)]),
+        "b": _risk("b"),
+        "c": _risk("c", hazards=[("storm", 2)]),
+    }
+    assert vessels_inside("H4", latest) == ["a"]
+    assert vessels_inside("missing", latest) == []
+
+
+def test_vessel_exposure_and_density_trend():
+    from georisk.route_dashboard.views import density_trend, vessel_exposure
+
+    events = [
+        _risk("a", "2026-01-01T12:10:00Z", hazards=[("storm", 4)]),
+        _risk("a", "2026-01-01T12:00:00Z"),
+        _risk("a", "2026-01-01T12:05:00Z", hazards=[("storm", 4)]),
+        _risk("b", "2026-01-01T12:05:00Z", hazards=[("storm", 4)]),
+    ]
+    assert vessel_exposure(events, "a") == {
+        "positions": 3,
+        "alerted_positions": 2,
+        "first_alerted": "2026-01-01T12:05:00Z",
+        "last_alerted": "2026-01-01T12:10:00Z",
+        "alert_ids": ["H4"],
+    }
+    assert vessel_exposure(events, "none")["first_alerted"] is None
+    trend = density_trend(
+        [_density("a", "12:15", 3), _density("b", "12:15", 5), _density("a", "12:00", 1)]
+    )
+    assert [(row["window"], row["peak"], row["cells"]) for row in trend] == [
+        ("12:00", 1, 1),
+        ("12:15", 5, 2),
+    ]
+
+
+def test_count_by_and_acceptance_summary():
+    from georisk.route_dashboard.views import acceptance_summary, count_by
+
+    assert count_by([{"r": "late"}, {"r": "late"}, {"r": None}], "r") == {"late": 2, "unknown": 1}
+    report = {
+        "acceptance": {
+            "passed": False,
+            "checked_at": "2026-01-01T12:00:00Z",
+            "checks": [
+                {"name": "run_status", "passed": True, "detail": "ok"},
+                {"name": "model_metrics", "passed": False, "detail": "nan"},
+            ],
+        }
+    }
+    summary = acceptance_summary(report)
+    assert summary["total"] == 2 and summary["passed_count"] == 1 and not summary["passed"]
+    assert summary["checks"][0]["check"] == "run status"
+    assert acceptance_summary(None) is None
+    assert acceptance_summary({"acceptance": "bad"}) is None

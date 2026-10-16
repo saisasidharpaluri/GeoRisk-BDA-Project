@@ -408,3 +408,145 @@ def daily_history(lake_dir: str | Path) -> list[dict[str, Any]]:
         {**entry, "exposed_vessels": len(entry["exposed_vessels"])}
         for _, entry in sorted(days.items())
     ]
+
+
+# --- Presentation helpers -------------------------------------------------
+
+
+def format_time(value: str | datetime | None) -> str:
+    """Return ``HH:MM`` in UTC, or an em dash for a missing or invalid value."""
+    try:
+        return _utc(value).strftime("%H:%M") if value else "—"
+    except ValueError:
+        return "—"
+
+
+def format_datetime(value: str | datetime | None) -> str:
+    """Return ``1 Jan 2026, 13:55 UTC``, or an em dash for a missing or invalid value."""
+    try:
+        timestamp = _utc(value) if value else None
+    except ValueError:
+        timestamp = None
+    if timestamp is None:
+        return "—"
+    return f"{timestamp.day} {timestamp:%b %Y, %H:%M} UTC"
+
+
+def humanize_minutes(minutes: float | None) -> str:
+    """Render a duration for people: ``<1 min``, ``12 min``, ``3 h 05 min``, ``288 days``."""
+    if minutes is None:
+        return "—"
+    sign = "−" if minutes < 0 else ""
+    value = abs(minutes)
+    if value < 1:
+        return f"{sign}<1 min"
+    if value < 60:
+        return f"{sign}{value:.0f} min"
+    if value < 48 * 60:
+        hours, remainder = divmod(round(value), 60)
+        return f"{sign}{hours} h {remainder:02d} min"
+    days = value / (24 * 60)
+    return f"{sign}{days:.0f} days"
+
+
+def time_span(
+    rows: Iterable[Mapping[str, Any]], field: str = "event_time"
+) -> tuple[str, str] | None:
+    """Return the earliest and latest timestamps of ``field``, or ``None`` if empty."""
+    values = sorted((row[field] for row in rows if row.get(field)), key=_utc)
+    return (values[0], values[-1]) if values else None
+
+
+def vessel_exposure(risk_events: Iterable[Mapping[str, Any]], vessel_id: str) -> dict[str, Any]:
+    """Summarise one vessel's hazard exposure over the whole scenario."""
+    rows = sorted(
+        (event for event in risk_events if event["vessel_id"] == vessel_id),
+        key=lambda event: _utc(event["event_time"]),
+    )
+    alerted = [event for event in rows if event.get("risk_alert")]
+    return {
+        "positions": len(rows),
+        "alerted_positions": len(alerted),
+        "first_alerted": alerted[0]["event_time"] if alerted else None,
+        "last_alerted": alerted[-1]["event_time"] if alerted else None,
+        "alert_ids": sorted(
+            {hazard["alert_id"] for event in alerted for hazard in event["matching_hazards"]}
+        ),
+    }
+
+
+def alert_status(alert: Mapping[str, Any], at_time: str | datetime) -> dict[str, Any]:
+    """Classify an alert at ``at_time`` and give the minutes until it starts or ends."""
+    timestamp = _utc(at_time)
+    start, end = _utc(alert["valid_from"]), _utc(alert["valid_until"])
+    if timestamp < start:
+        return {"state": "upcoming", "minutes": (start - timestamp).total_seconds() / 60}
+    if timestamp >= end:
+        return {"state": "expired", "minutes": (timestamp - end).total_seconds() / 60}
+    return {"state": "active", "minutes": (end - timestamp).total_seconds() / 60}
+
+
+def vessels_inside(alert_id: str, latest_risk: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Vessels whose latest position matched ``alert_id``."""
+    return sorted(
+        vessel
+        for vessel, event in latest_risk.items()
+        if any(hazard["alert_id"] == alert_id for hazard in event.get("matching_hazards") or [])
+    )
+
+
+def density_trend(density_metrics: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Per window: busiest cell's unique-vessel count and the number of occupied cells."""
+    windows: dict[str, dict[str, Any]] = {}
+    for row in density_metrics:
+        entry = windows.setdefault(row["window_start"], {"peak": 0, "cells": 0})
+        entry["peak"] = max(entry["peak"], row["unique_vessel_count"])
+        entry["cells"] += 1
+    return [
+        {"window_start": start, "window": format_time(start), **windows[start]}
+        for start in sorted(windows, key=_utc)
+    ]
+
+
+def count_by(rows: Iterable[Mapping[str, Any]], field: str) -> dict[str, int]:
+    """Count rows by one field, largest first; missing values count as ``unknown``."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get(field) or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
+def acceptance_summary(report: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Condense a run report's acceptance block; ``None`` when no report is available."""
+    acceptance = (report or {}).get("acceptance")
+    if not isinstance(acceptance, Mapping):
+        return None
+    checks = [
+        {
+            "check": str(item.get("name", "")).replace("_", " "),
+            "passed": bool(item.get("passed")),
+            "detail": str(item.get("detail", "")),
+        }
+        for item in acceptance.get("checks") or []
+        if isinstance(item, Mapping)
+    ]
+    return {
+        "passed": bool(acceptance.get("passed")),
+        "total": len(checks),
+        "passed_count": sum(check["passed"] for check in checks),
+        "checked_at": acceptance.get("checked_at"),
+        "checks": checks,
+    }
+
+
+def chart_time_labels(values: Iterable[str | datetime]) -> list[str]:
+    """Label instants for chart axes in UTC: ``HH:MM`` within one day, else ``MM-DD HH:MM``.
+
+    Charts receive these strings instead of datetimes because the browser would
+    otherwise convert timestamps to the viewer's local time zone. Both formats
+    sort chronologically as text.
+    """
+    instants = [_utc(value) for value in values]
+    single_day = len({instant.date() for instant in instants}) <= 1
+    return [instant.strftime("%H:%M" if single_day else "%m-%d %H:%M") for instant in instants]

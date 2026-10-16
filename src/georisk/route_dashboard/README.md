@@ -91,57 +91,67 @@ markers. `build_deck()` frames `DEMO_BBOX` on a Carto basemap (no token) with a
 shared tooltip. Colours follow nautical-chart convention: magenta hazards,
 navy traffic, green safe passage.
 
-The live map uses `st.pydeck_chart` with one sidebar checkbox per layer (all on
-by default) and a legend that lists only the visible layers. Clicking a vessel
-or hazard zone selects it in the "Inspect" panel, which shows the vessel's
-latest position, risk flag, and matched hazards, or the alert's type, severity,
-validity, and H3 cell count. No-data states are explicit.
+The page reads top to bottom as a presentation:
 
-The KPI row shows active alerts at the latest event time, vessels exposed now
-(with an exposure sparkline), alerted positions, and the latest event time in
-UTC. The "Risk" tab filters alerted positions by hazard type, minimum severity
-(1–5), and event-time range; both the severity chart and the risk table follow
-those filters, and the table includes `coverage_mode` and `h3_resolution`.
+1. **Header** – title, a one-sentence description, and badges for simulated
+   data, the scenario's UTC time span, H3 resolution with average cell area,
+   coverage mode, and density window (from `run-metadata.json`, falling back to
+   the configured settings). Beside it, **Data freshness** shows processed time,
+   latest event, watermark, and processing lag in readable units; "Fresh" or
+   "Stale" is wall-clock age since processing, so a new `georisk run` is fresh.
+   For the seeded historical data a note explains the large processing lag.
+2. **Pipeline strip** – one card per stage (ingest, H3 index, risk match,
+   corridor density, analytics) with the counts this run produced.
+3. **KPI row** – active alerts and vessels inside a hazard at the latest
+   report, alerted positions over the whole scenario, and the route decision
+   (detour, keep baseline, or no safe route).
+4. **Live map and Inspect** – PyDeck layers with one sidebar checkbox each and
+   a legend for the visible layers. The caption states which layers show the
+   latest moment (vessels, hazard zones) and which summarise the scenario
+   (alerted H3 cells) or the selected density window. Clicking a vessel or
+   zone fills the Inspect panel with a readable card: status pill, position,
+   speed, heading, H3 cell, current hazards, and exposure history for a
+   vessel; state and time left, severity, validity, H3 coverage, and vessels
+   inside for an alert.
+5. **Tabs**, one per analytic product:
+   - *Hazard exposure* ("Risk summary") – filters for hazard type, minimum
+     severity, and time; a vessels-in-hazard timeline; a severity chart that
+     follows the filters; and the alerted-position table.
+   - *Corridor density* – busiest-cell and occupied-cell trend, a window
+     slider that also drives the map, the window's busiest cells, and a
+     comparison with the calendar-adjacent windows (a quiet neighbour shows 0;
+     blank only outside the processed range).
+   - *Delay model* ("Delay estimates") – model and baseline MAE, error
+     reduction, a prediction-vs-label scatter with a y = x reference line, the
+     label formula, and each vessel's latest estimate with feature context.
+     "Demo mode: show synthetic ground truth" adds the label column.
+   - *Route decision* ("Route comparison") – the explanation, side-by-side
+     baseline and alternative cards (sailing hours, risk, penalised cost, with
+     deltas), and lane status with risk drivers. Node IDs are shown with their
+     map labels (Port A, Chokepoint, Outer waypoint, Port B).
+   - *Run quality* – acceptance checks from the run report (path under
+     "Data sources", default `GEORISK_REPORT_PATH`), record accounting
+     (positions, alerts, quarantined, duplicates, late, future), quarantine
+     reasons, the settings used, and the "History" expander with daily totals
+     from the curated lake.
 
-The "Corridor density" tab selects a window (`select_slider`, defaulting to the
-latest), lists its busiest cells, and compares each cell with the
-calendar-adjacent windows (start minus and plus the window length). A quiet
-neighbour shows 0; it is blank (`None`) only outside the processed time range.
-The map's extruded density layer shows the selected window.
+All chart axes use UTC labels (`views.chart_time_labels`) because browsers
+would otherwise shift datetimes into the viewer's local time zone. Timestamps
+in text use `format_time` / `format_datetime`, and durations use
+`humanize_minutes`.
 
-The "Delay" tab reads `processed/delay-estimates.jsonl` and shows each vessel's
-latest predicted delay, the mean baseline, and the error, all in hours, with
-model vs baseline MAE on held-out rows. Feature context columns show hazard
-severity, cell density, speed, distance to Port B, and sailing hours. "Demo mode: show synthetic ground
-truth" adds the synthetic label column. The panel is labelled as a synthetic
-demonstration and shows a no-data message when the file is missing.
+The sidebar holds a "Presenter guide", the "Route what-if" group (hazard
+scenario, risk threshold, penalty), map layers, "Auto-refresh every 10 s"
+(reruns the data-dependent body with `st.fragment(run_every=10)`), and a
+collapsed "Data sources" expander.
 
-The sidebar "Route what-if" group holds the hazard scenario ("As generated",
-"No hazards", or "Close inner lane", which adds a synthetic severity-5 closure
-at the chokepoint), the risk threshold, and the penalty, all defaulting to the
-configured values. `dashboard_route(..., alerts=...)` scores the graph with the
-scenario's alerts. The "Route" tab shows the explanation, a baseline vs
-alternative table (path, hours, risk, total cost), and lane status with risk
-drivers; the map's hazard and route layers follow the same scenario.
-
-The header reads "SIMULATED DATA · H3 res N · coverage: … · window: M min"
-from `run-metadata.json` (falling back to the configured settings). The
-"Data freshness" panel shows `processed_at`, latest event time, watermark, and
-wall-clock age since processing as fresh, stale (older than
-`GEORISK_STALE_AFTER_MINUTES`), or unavailable, so a new `georisk run` is fresh.
-"Processing lag" (`processing_lag_minutes`, processing time minus latest event
-time) is large for the seeded historical data.
-Metric labels carry their units. The sidebar toggle "Auto-refresh every 10 s"
-reruns the data-dependent body with `st.fragment(run_every=10)`; the directory
-fields sit in a collapsed "Data sources" expander.
-
-`theme.toml` holds the Streamlit theme (chart-paper background, navy sidebar,
-Archivo / Public Sans / IBM Plex Mono). `georisk dashboard` applies it by
-setting `STREAMLIT_THEME_BASE`; when launching `streamlit run` directly, pass
-`--theme.base src/georisk/route_dashboard/theme.toml` to get the same look.
-The dashboard extra requires `streamlit>=1.50,<2` and uses `width="stretch"`.
+`styles.py` holds the CSS and legend HTML; `theme.toml` holds the Streamlit
+theme (chart-paper background, navy sidebar, Archivo / Public Sans / IBM Plex
+Mono). `georisk dashboard` applies the theme by setting `STREAMLIT_THEME_BASE`;
+when launching `streamlit run` directly, pass
+`--theme.base src/georisk/route_dashboard/theme.toml`. The dashboard extra
+requires `streamlit>=1.50,<2`.
 
 `views.daily_history(lake_dir)` summarises the curated lake per `event_date`
-(risk events, alerted events, exposed vessels, peak density). The dashboard's
-"History" expander charts and tabulates it, reading the lake directory set in
-"Data sources", and shows a no-data message for an empty lake.
+(risk events, alerted events, exposed vessels, peak density) for the History
+expander, which shows a no-data message for an empty lake.

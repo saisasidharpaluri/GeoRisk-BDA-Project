@@ -281,3 +281,27 @@ def test_effective_settings_follow_run_metadata():
     )
     assert effective_settings(settings, None) is settings
     assert effective_settings(settings, {"h3_resolution": 99}) is settings
+
+
+def test_route_decision_verdicts():
+    from georisk.route_dashboard.dashboard import route_decision
+
+    assert route_decision(None)["verdict"] == "—"
+    detour = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
+    assert route_decision(detour)["verdict"] == "Detour"
+    assert "h sailing" in route_decision(detour)["detail"]
+    kept = find_alternative_route(demonstration_graph(), "port_a", "port_b", 1.0)
+    assert route_decision(kept)["verdict"] == "Keep baseline"
+    blocked = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.0)
+    assert route_decision(blocked)["verdict"] == "No safe route"
+
+
+def test_report_and_quarantine_loaders_tolerate_missing_files(tmp_path):
+    from georisk.route_dashboard.dashboard import load_quarantine, load_run_report
+
+    assert load_run_report(tmp_path / "missing.json") is None
+    (tmp_path / "bad.json").write_text("{", encoding="utf-8")
+    assert load_run_report(tmp_path / "bad.json") is None
+    assert load_quarantine(tmp_path) == []
+    (tmp_path / "quarantine.jsonl").write_text('{"reason": "late_event"}\n', encoding="utf-8")
+    assert load_quarantine(tmp_path) == [{"reason": "late_event"}]
