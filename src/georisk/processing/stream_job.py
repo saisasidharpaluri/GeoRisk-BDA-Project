@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -126,6 +127,238 @@ def _matching_hazards(
     return sorted(matches, key=lambda match: match["alert_id"])
 
 
+class StreamProcessor:
+    """Incremental event-time processor; ``process_events`` runs one as a single batch.
+
+    Alerts and telemetry may arrive in micro-batches. Alerts must be added
+    before the telemetry they apply to: each ``add_alerts`` call rebuilds the
+    as-of revision coverage from every alert accepted so far, so telemetry is
+    matched exactly as in one batch over the same events in the same order.
+    Deduplication, the watermark, and density state persist across calls, and
+    ``result`` returns everything accumulated so far.
+
+    Telemetry stamped more than ``max_future_minutes`` after ``now`` (default:
+    the current UTC time) is quarantined as ``future_event`` so that a single
+    bad clock cannot advance the watermark and mark later valid data as late.
+    """
+
+    def __init__(
+        self,
+        *,
+        resolution: int = DEFAULT_RESOLUTION,
+        strict: bool = False,
+        coverage_mode: str = DEFAULT_COVERAGE_MODE,
+        window_minutes: int = WINDOW_MINUTES,
+        allowed_lateness_minutes: int = 10,
+        max_future_minutes: int = MAX_FUTURE_MINUTES,
+        now: datetime | None = None,
+    ) -> None:
+        if not isinstance(strict, bool):
+            raise TypeError("strict must be a boolean")
+        if (
+            not isinstance(max_future_minutes, int)
+            or isinstance(max_future_minutes, bool)
+            or max_future_minutes < 0
+        ):
+            raise ValueError("max_future_minutes must be a non-negative integer")
+        reference_time = datetime.now(UTC) if now is None else now
+        if reference_time.tzinfo is None or reference_time.utcoffset() != timedelta(0):
+            raise ValueError("now must be timezone-aware UTC")
+        if (
+            not isinstance(window_minutes, int)
+            or isinstance(window_minutes, bool)
+            or not 1 <= window_minutes <= 1440
+            or 1440 % window_minutes != 0
+        ):
+            raise ValueError("window_minutes must be 1..1440 and divide 1440")
+        if (
+            not isinstance(allowed_lateness_minutes, int)
+            or isinstance(allowed_lateness_minutes, bool)
+            or not 0 <= allowed_lateness_minutes <= 1440
+        ):
+            raise ValueError("allowed_lateness_minutes must be an integer from 0 to 1440")
+        _validate_resolution(resolution)
+        if coverage_mode not in COVERAGE_MODES:
+            raise ValueError("coverage_mode must be center or overlap")
+        self.settings = {
+            "h3_resolution": resolution,
+            "coverage_mode": coverage_mode,
+            "window_minutes": window_minutes,
+            "allowed_lateness_minutes": allowed_lateness_minutes,
+        }
+        self._strict = strict
+        self._resolution = resolution
+        self._coverage_mode = coverage_mode
+        self._window_minutes = window_minutes
+        self._allowed_lateness = timedelta(minutes=allowed_lateness_minutes)
+        self._future_limit = reference_time + timedelta(minutes=max_future_minutes)
+        self.quarantine: list[dict[str, Any]] = []
+        self.stats: dict[str, Any] = {
+            "telemetry_in": 0,
+            "alerts_in": 0,
+            "quarantined": 0,
+            "duplicates_dropped": 0,
+            "late_dropped": 0,
+            "future_dropped": 0,
+            "alert_revisions_superseded": 0,
+        }
+        self._covered_alerts: list[tuple[dict[str, Any], set[str]]] = []
+        self._coverage: dict[str, list[AlertRevision]] = {}
+        self._seen_event_ids: set[str] = set()
+        self._max_event_time: datetime | None = None
+        self._risk_events: list[dict[str, Any]] = []
+        self._density: defaultdict[tuple[datetime, datetime, str], set[str]] = defaultdict(set)
+
+    def add_alerts(self, alerts: Iterable[Mapping[str, Any]]) -> None:
+        """Validate alerts, quarantine rejects, and rebuild hazard coverage."""
+        accepted = []
+        for alert in alerts:
+            self.stats["alerts_in"] += 1
+            try:
+                validate_event("weather_alert", alert)
+            except (ContractValidationError, TypeError) as exc:
+                if self._strict:
+                    raise
+                reason = (
+                    "invalid_validity_range"
+                    if isinstance(exc, ContractValidationError)
+                    and "valid_until: must be after valid_from" in exc.errors
+                    else "contract_violation"
+                )
+                self.quarantine.append(_quarantine_entry("weather_alert", reason, alert, exc))
+                continue
+            accepted.append(dict(alert))
+        # Geometry is checked before revision ordering so a rejected revision does
+        # not leave an interval in which no version of the alert applies.
+        for alert in accepted:
+            try:
+                cells = polygon_to_cells(alert["geometry"], self._resolution, self._coverage_mode)
+            except ValueError as exc:
+                if self._strict:
+                    raise
+                self.quarantine.append(
+                    _quarantine_entry("weather_alert", "invalid_geometry", alert, exc)
+                )
+                continue
+            self._covered_alerts.append((alert, cells))
+        cells_by_alert = {id(alert): cells for alert, cells in self._covered_alerts}
+        coverage: dict[str, list[AlertRevision]] = {}
+        for revision in alert_revisions(alert for alert, _ in self._covered_alerts):
+            for cell in cells_by_alert[id(revision.alert)]:
+                coverage.setdefault(cell, []).append(revision)
+        self._coverage = coverage
+        self.stats["alert_revisions_superseded"] = len(self._covered_alerts) - len(
+            {alert["alert_id"] for alert, _ in self._covered_alerts}
+        )
+
+    def add_telemetry(self, telemetry: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Match telemetry against the current coverage; return the new risk events."""
+        new_events = []
+        for event in telemetry:
+            self.stats["telemetry_in"] += 1
+            try:
+                validate_event("vessel_telemetry", event)
+            except (ContractValidationError, TypeError) as exc:
+                if self._strict:
+                    raise
+                self.quarantine.append(
+                    _quarantine_entry("vessel_telemetry", "contract_violation", event, exc)
+                )
+                continue
+            if event["event_id"] in self._seen_event_ids:
+                self.stats["duplicates_dropped"] += 1
+                continue
+            self._seen_event_ids.add(event["event_id"])
+            event_time = _parse_utc(event["event_time"])
+            if event_time > self._future_limit:
+                self.stats["future_dropped"] += 1
+                self.quarantine.append(
+                    _quarantine_entry(
+                        "vessel_telemetry",
+                        "future_event",
+                        event,
+                        ValueError(
+                            "event_time is later than the allowed limit "
+                            f"{_timestamp(self._future_limit)}"
+                        ),
+                    )
+                )
+                continue
+            latest = self._max_event_time
+            if latest is not None and event_time < latest - self._allowed_lateness:
+                self.stats["late_dropped"] += 1
+                self.quarantine.append(
+                    _quarantine_entry(
+                        "vessel_telemetry",
+                        "late_event",
+                        event,
+                        ValueError(
+                            "event_time precedes watermark "
+                            f"{_timestamp(latest - self._allowed_lateness)}"
+                        ),
+                    )
+                )
+                continue
+            self._max_event_time = max(latest, event_time) if latest else event_time
+            cell = point_to_cell(event["latitude"], event["longitude"], self._resolution)
+            matches = _matching_hazards(cell, event_time, self._coverage)
+            risk_event = {
+                "schema_version": SCHEMA_VERSION,
+                "event_id": event["event_id"],
+                "latitude": event["latitude"],
+                "longitude": event["longitude"],
+                "coverage_mode": self._coverage_mode,
+                "event_time": event["event_time"],
+                "vessel_id": event["vessel_id"],
+                "h3_index": cell,
+                "h3_resolution": self._resolution,
+                "risk_alert": bool(matches),
+                "matching_hazards": matches,
+            }
+            validate_event("risk_event", risk_event)
+            new_events.append(risk_event)
+            window_start = _window_start(event_time, self._window_minutes)
+            window_end = window_start + timedelta(minutes=self._window_minutes)
+            self._density[(window_start, window_end, cell)].add(event["vessel_id"])
+        self._risk_events.extend(new_events)
+        return new_events
+
+    def result(self) -> dict[str, Any]:
+        """Return risk events, density metrics, quarantine, and stats accumulated so far."""
+        density_metrics = [
+            {
+                "schema_version": SCHEMA_VERSION,
+                "window_start": _timestamp(window_start),
+                "window_end": _timestamp(window_end),
+                "h3_index": cell,
+                "h3_resolution": self._resolution,
+                "unique_vessel_count": len(vessels),
+            }
+            for (window_start, window_end, cell), vessels in sorted(self._density.items())
+        ]
+        for metric in density_metrics:
+            validate_event("density_metric", metric)
+        risk_events = sorted(
+            self._risk_events,
+            key=lambda event: (
+                _parse_utc(event["event_time"]),
+                event["vessel_id"],
+                event["event_id"],
+            ),
+        )
+        latest = self._max_event_time
+        stats = dict(self.stats)
+        stats["max_event_time"] = _timestamp(latest) if latest else None
+        stats["watermark"] = _timestamp(latest - self._allowed_lateness) if latest else None
+        stats["quarantined"] = len(self.quarantine)
+        return {
+            "risk_events": risk_events,
+            "density_metrics": density_metrics,
+            "quarantine": list(self.quarantine),
+            "stats": stats,
+        }
+
+
 def process_events(
     telemetry: Iterable[Mapping[str, Any]],
     alerts: Iterable[Mapping[str, Any]],
@@ -140,198 +373,24 @@ def process_events(
 ) -> dict[str, Any]:
     """Create risk events and unique-vessel density metrics from one batch.
 
-    Telemetry stamped more than ``max_future_minutes`` after ``now`` (default:
-    the current UTC time) is quarantined as ``future_event`` so that a single
-    bad clock cannot advance the watermark and mark later valid data as late.
+    All alerts are applied before any telemetry; see :class:`StreamProcessor`
+    for the matching, watermark, and future-event rules.
     """
-    if not isinstance(strict, bool):
-        raise TypeError("strict must be a boolean")
-    if (
-        not isinstance(max_future_minutes, int)
-        or isinstance(max_future_minutes, bool)
-        or max_future_minutes < 0
-    ):
-        raise ValueError("max_future_minutes must be a non-negative integer")
-    reference_time = datetime.now(UTC) if now is None else now
-    if reference_time.tzinfo is None or reference_time.utcoffset() != timedelta(0):
-        raise ValueError("now must be timezone-aware UTC")
-    future_limit = reference_time + timedelta(minutes=max_future_minutes)
-    if (
-        not isinstance(window_minutes, int)
-        or isinstance(window_minutes, bool)
-        or not 1 <= window_minutes <= 1440
-        or 1440 % window_minutes != 0
-    ):
-        raise ValueError("window_minutes must be 1..1440 and divide 1440")
-    if (
-        not isinstance(allowed_lateness_minutes, int)
-        or isinstance(allowed_lateness_minutes, bool)
-        or not 0 <= allowed_lateness_minutes <= 1440
-    ):
-        raise ValueError("allowed_lateness_minutes must be an integer from 0 to 1440")
-    _validate_resolution(resolution)
-    if coverage_mode not in COVERAGE_MODES:
-        raise ValueError("coverage_mode must be center or overlap")
-    settings = {
-        "h3_resolution": resolution,
-        "coverage_mode": coverage_mode,
-        "window_minutes": window_minutes,
-        "allowed_lateness_minutes": allowed_lateness_minutes,
-    }
-    logger.info("Processing batch", extra={"georisk": settings})
-    quarantine = []
-    stats: dict[str, Any] = {"telemetry_in": 0, "alerts_in": 0, "quarantined": 0}
-    stats["duplicates_dropped"] = 0
-    stats["late_dropped"] = 0
-    stats["future_dropped"] = 0
-    max_event_time: datetime | None = None
-    allowed_lateness = timedelta(minutes=allowed_lateness_minutes)
-    alert_records = []
-    for alert in alerts:
-        stats["alerts_in"] += 1
-        try:
-            validate_event("weather_alert", alert)
-        except (ContractValidationError, TypeError) as exc:
-            if strict:
-                raise
-            reason = (
-                "invalid_validity_range"
-                if isinstance(exc, ContractValidationError)
-                and "valid_until: must be after valid_from" in exc.errors
-                else "contract_violation"
-            )
-            quarantine.append(_quarantine_entry("weather_alert", reason, alert, exc))
-            continue
-        alert_records.append(dict(alert))
-
-    # Geometry is checked before revision ordering so a rejected revision does
-    # not leave an interval in which no version of the alert applies.
-    cells_by_alert: dict[int, set[str]] = {}
-    covered_alerts = []
-    for alert in alert_records:
-        try:
-            cells_by_alert[id(alert)] = polygon_to_cells(
-                alert["geometry"], resolution, coverage_mode
-            )
-        except ValueError as exc:
-            if strict:
-                raise
-            quarantine.append(_quarantine_entry("weather_alert", "invalid_geometry", alert, exc))
-            continue
-        covered_alerts.append(alert)
-    coverage: dict[str, list[AlertRevision]] = {}
-    for revision in alert_revisions(covered_alerts):
-        for cell in cells_by_alert[id(revision.alert)]:
-            coverage.setdefault(cell, []).append(revision)
-    stats["alert_revisions_superseded"] = len(covered_alerts) - len(
-        {alert["alert_id"] for alert in covered_alerts}
+    processor = StreamProcessor(
+        resolution=resolution,
+        strict=strict,
+        coverage_mode=coverage_mode,
+        window_minutes=window_minutes,
+        allowed_lateness_minutes=allowed_lateness_minutes,
+        max_future_minutes=max_future_minutes,
+        now=now,
     )
-
-    risk_events = []
-    seen_event_ids: set[str] = set()
-    density_keys: set[tuple[datetime, datetime, str, str]] = set()
-    for event in telemetry:
-        stats["telemetry_in"] += 1
-        try:
-            validate_event("vessel_telemetry", event)
-        except (ContractValidationError, TypeError) as exc:
-            if strict:
-                raise
-            quarantine.append(
-                _quarantine_entry("vessel_telemetry", "contract_violation", event, exc)
-            )
-            continue
-        if event["event_id"] in seen_event_ids:
-            stats["duplicates_dropped"] += 1
-            continue
-        seen_event_ids.add(event["event_id"])
-        event_time = _parse_utc(event["event_time"])
-        if event_time > future_limit:
-            stats["future_dropped"] += 1
-            quarantine.append(
-                _quarantine_entry(
-                    "vessel_telemetry",
-                    "future_event",
-                    event,
-                    ValueError(
-                        f"event_time is later than the allowed limit {_timestamp(future_limit)}"
-                    ),
-                )
-            )
-            continue
-        if max_event_time is not None and event_time < max_event_time - allowed_lateness:
-            stats["late_dropped"] += 1
-            quarantine.append(
-                _quarantine_entry(
-                    "vessel_telemetry",
-                    "late_event",
-                    event,
-                    ValueError(
-                        "event_time precedes watermark "
-                        f"{_timestamp(max_event_time - allowed_lateness)}"
-                    ),
-                )
-            )
-            continue
-        max_event_time = max(max_event_time, event_time) if max_event_time else event_time
-        cell = point_to_cell(event["latitude"], event["longitude"], resolution)
-        matches = _matching_hazards(cell, event_time, coverage)
-        risk_events.append(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "event_id": event["event_id"],
-                "latitude": event["latitude"],
-                "longitude": event["longitude"],
-                "coverage_mode": coverage_mode,
-                "event_time": event["event_time"],
-                "vessel_id": event["vessel_id"],
-                "h3_index": cell,
-                "h3_resolution": resolution,
-                "risk_alert": bool(matches),
-                "matching_hazards": matches,
-            }
-        )
-        window_start = _window_start(event_time, window_minutes)
-        density_keys.add(
-            (
-                window_start,
-                window_start + timedelta(minutes=window_minutes),
-                cell,
-                event["vessel_id"],
-            )
-        )
-
-    density_vessels: defaultdict[tuple[datetime, datetime, str], set[str]] = defaultdict(set)
-    for window_start, window_end, cell, vessel_id in density_keys:
-        density_vessels[(window_start, window_end, cell)].add(vessel_id)
-    density_metrics = [
-        {
-            "schema_version": SCHEMA_VERSION,
-            "window_start": _timestamp(window_start),
-            "window_end": _timestamp(window_end),
-            "h3_index": cell,
-            "h3_resolution": resolution,
-            "unique_vessel_count": len(vessels),
-        }
-        for (window_start, window_end, cell), vessels in sorted(density_vessels.items())
-    ]
-    for event in risk_events:
-        validate_event("risk_event", event)
-    for metric in density_metrics:
-        validate_event("density_metric", metric)
-    risk_events.sort(
-        key=lambda event: (_parse_utc(event["event_time"]), event["vessel_id"], event["event_id"])
-    )
-    stats["max_event_time"] = _timestamp(max_event_time) if max_event_time else None
-    stats["watermark"] = _timestamp(max_event_time - allowed_lateness) if max_event_time else None
-    stats["quarantined"] = len(quarantine)
-    logger.info("Processing complete", extra={"georisk": {**settings, **stats}})
-    return {
-        "risk_events": risk_events,
-        "density_metrics": density_metrics,
-        "quarantine": quarantine,
-        "stats": stats,
-    }
+    logger.info("Processing batch", extra={"georisk": processor.settings})
+    processor.add_alerts(alerts)
+    processor.add_telemetry(telemetry)
+    result = processor.result()
+    logger.info("Processing complete", extra={"georisk": {**processor.settings, **result["stats"]}})
+    return result
 
 
 def _json_safe(value: Any) -> Any:
@@ -383,10 +442,68 @@ def _read_jsonl(
     return records
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Replace ``path`` in one step so concurrent readers never see a partial file."""
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8") as output:
-        for record in records:
-            output.write(json.dumps(record, sort_keys=True) + "\n")
+    _write_atomic(path, "".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
+
+
+def include_unreadable(results: dict[str, Any], unreadable: list[dict[str, Any]]) -> None:
+    """Prepend quarantine entries for unreadable input lines and count them as input."""
+    for entry in unreadable:
+        key = "telemetry_in" if entry["contract"] == "vessel_telemetry" else "alerts_in"
+        results["stats"][key] += 1
+    results["quarantine"] = unreadable + results["quarantine"]
+    results["stats"]["quarantined"] = len(results["quarantine"])
+
+
+def run_metadata(
+    results: Mapping[str, Any],
+    *,
+    resolution: int,
+    coverage_mode: str,
+    window_minutes: int,
+    allowed_lateness_minutes: int,
+    max_future_minutes: int,
+) -> dict[str, Any]:
+    """Describe one processing run for ``run-metadata.json`` and the dashboard."""
+    return {
+        "processed_at": _timestamp(datetime.now(UTC)),
+        "latest_event_time": results["stats"]["max_event_time"],
+        "watermark": results["stats"]["watermark"],
+        "h3_resolution": resolution,
+        "coverage_mode": coverage_mode,
+        "window_minutes": window_minutes,
+        "allowed_lateness_minutes": allowed_lateness_minutes,
+        "max_future_minutes": max_future_minutes,
+        "counts": dict(results["stats"]),
+        "simulated": True,
+    }
+
+
+def write_outputs(output_dir: str | Path, results: Mapping[str, Any]) -> None:
+    """Write processed JSONL outputs, then ``run-metadata.json`` last.
+
+    Each file is replaced atomically and the metadata goes last, so a reader
+    that sees new metadata also sees the outputs it describes.
+    """
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(directory / "risk-events.jsonl", results["risk_events"])
+    _write_jsonl(directory / "density-metrics.jsonl", results["density_metrics"])
+    _write_jsonl(directory / "quarantine.jsonl", results["quarantine"])
+    _write_atomic(
+        directory / "run-metadata.json",
+        json.dumps(results["metadata"], indent=2, sort_keys=True) + "\n",
+    )
 
 
 def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -427,33 +544,17 @@ def run_streaming_job(config: Mapping[str, Any]) -> dict[str, Any]:
         allowed_lateness_minutes=config.get("allowed_lateness_minutes", 10),
         max_future_minutes=config.get("max_future_minutes", MAX_FUTURE_MINUTES),
     )
-    for entry in quarantine:
-        key = "telemetry_in" if entry["contract"] == "vessel_telemetry" else "alerts_in"
-        results["stats"][key] += 1
-    results["quarantine"] = quarantine + results["quarantine"]
-    results["stats"]["quarantined"] = len(results["quarantine"])
-    results["metadata"] = {
-        "processed_at": _timestamp(datetime.now(UTC)),
-        "latest_event_time": results["stats"]["max_event_time"],
-        "watermark": results["stats"]["watermark"],
-        "h3_resolution": resolution,
-        "coverage_mode": config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
-        "window_minutes": config.get("window_minutes", WINDOW_MINUTES),
-        "allowed_lateness_minutes": config.get("allowed_lateness_minutes", 10),
-        "max_future_minutes": config.get("max_future_minutes", MAX_FUTURE_MINUTES),
-        "counts": dict(results["stats"]),
-        "simulated": True,
-    }
+    include_unreadable(results, quarantine)
+    results["metadata"] = run_metadata(
+        results,
+        resolution=resolution,
+        coverage_mode=config.get("coverage_mode", DEFAULT_COVERAGE_MODE),
+        window_minutes=config.get("window_minutes", WINDOW_MINUTES),
+        allowed_lateness_minutes=config.get("allowed_lateness_minutes", 10),
+        max_future_minutes=config.get("max_future_minutes", MAX_FUTURE_MINUTES),
+    )
     if config.get("output_dir"):
-        output_dir = Path(config["output_dir"])
-        output_dir.mkdir(parents=True, exist_ok=True)
-        _write_jsonl(output_dir / "risk-events.jsonl", results["risk_events"])
-        _write_jsonl(output_dir / "density-metrics.jsonl", results["density_metrics"])
-        _write_jsonl(output_dir / "quarantine.jsonl", results["quarantine"])
-        (output_dir / "run-metadata.json").write_text(
-            json.dumps(results["metadata"], indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        write_outputs(config["output_dir"], results)
     logger.info(
         "Processing run complete",
         extra={

@@ -25,6 +25,7 @@ PAPER = [242, 245, 244]
 NODE_LABELS = {
     "port_a": "Port A",
     "port_b": "Port B",
+    "junction": "Junction",
     "chokepoint": "Chokepoint",
     "outer_lane": "Outer waypoint",
 }
@@ -144,7 +145,7 @@ def risk_cells_layer(risk_events: Iterable[Mapping[str, Any]]) -> pdk.Layer:
             "severity": cell["severity"],
             "fill": CHART_MAGENTA + [60 + 25 * cell["severity"]],
             "tooltip": _tooltip(
-                "Alerted H3 cell (whole scenario)",
+                "Alerted H3 cell (so far)",
                 h3_index,
                 f"{cell['events']} alerted positions from {len(cell['vessels'])} vessels",
                 f"Highest hazard severity {cell['severity']}",
@@ -316,4 +317,34 @@ def build_deck(layers: Iterable[pdk.Layer], *, pitch: float = 30) -> pdk.Deck:
                 "borderRadius": "4px",
             },
         },
+    )
+
+
+def tracks_layer(
+    tracks: Mapping[str, list[list[float]]],
+    alerted_vessel_ids: Iterable[str],
+) -> pdk.Layer:
+    """Thin trails of each vessel's positions so far; red for vessels now in a hazard."""
+    alerted = set(alerted_vessel_ids)
+    data = [
+        {
+            "vessel_id": vessel,
+            "path": points,
+            "color": (ALERT_RED if vessel in alerted else INK) + [110],
+            "tooltip": _tooltip(f"{vessel} track", f"{len(points)} position reports so far"),
+        }
+        for vessel, points in tracks.items()
+        if len(points) > 1
+    ]
+    return pdk.Layer(
+        "PathLayer",
+        data,
+        id="tracks",
+        pickable=True,
+        get_path="path",
+        get_color="color",
+        get_width=2,
+        width_units="'pixels'",
+        cap_rounded=True,
+        joint_rounded=True,
     )

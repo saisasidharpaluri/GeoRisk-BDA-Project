@@ -7,7 +7,7 @@ import math
 import re
 from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
-from functools import cache
+from functools import cache, lru_cache
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +40,12 @@ def parse_utc_timestamp(value: object) -> datetime:
     """
     if not isinstance(value, str):
         raise ValueError("timestamp must be a string")
+    return _parse_utc_string(value)
+
+
+@lru_cache(maxsize=65536)
+def _parse_utc_string(value: str) -> datetime:
+    """Parse one timestamp string; cached because streams repeat the same instants."""
     match = _UTC_TIMESTAMP.fullmatch(value)
     if match is None:
         raise ValueError(f"timestamp must be RFC 3339 UTC (YYYY-MM-DDTHH:MM:SS[.f]Z): {value!r}")

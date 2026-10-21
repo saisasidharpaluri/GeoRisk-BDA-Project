@@ -34,6 +34,7 @@ def test_help_lists_subcommands(capsys, monkeypatch):
         "validate",
         "compare-resolutions",
         "dashboard",
+        "live",
     ):
         assert command in output
     assert "spark-stream" not in output
@@ -64,6 +65,26 @@ def test_run_and_validate_exit_codes(tmp_path, capsys):
     checks = json.loads(capsys.readouterr().out)["checks"]
     assert next(item for item in checks if item["name"] == "artifact_integrity")["passed"] is False
     assert cli.main(["validate", "--report", str(tmp_path / "missing.json")]) == 1
+
+
+def test_live_streams_and_reports(tmp_path, capsys):
+    args = ["live", "--tick-seconds", "0", "--vessels", "4"]
+    for flag, name in (
+        ("--input-dir", "inputs"),
+        ("--processed-dir", "processed"),
+        ("--lake-dir", "lake"),
+        ("--stream-dir", "stream"),
+        ("--report-path", "report.json"),
+    ):
+        args += [flag, str(tmp_path / name)]
+    assert cli.main(args) == 0
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["acceptance"]["passed"]
+    assert report["live"]["status"] == "complete"
+    assert report["config"]["vessel_count"] == 4
+    assert "georisk live: 13:55 UTC | step 24/24" in captured.err
+    assert list((tmp_path / "stream" / "live" / "vessel-telemetry").glob("part-*.jsonl"))
 
 
 def test_generate_writes_files(tmp_path):

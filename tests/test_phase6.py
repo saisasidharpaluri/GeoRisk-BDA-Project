@@ -144,7 +144,7 @@ def test_phase6_runs_all_local_stages_and_writes_report(tmp_path):
     assert report["route"]["alternative"]["blocked_edges"]
     assert report["route"]["explanation"]
     assert report["route"]["at_time"] == metadata["latest_event_time"]
-    assert report["route"]["edge_scores"]["port_a"][0]["risk_detail"]["alert_ids"] == ["H1"]
+    assert report["route"]["edge_scores"]["junction"][0]["risk_detail"]["alert_ids"] == ["H1"]
     assert report["route"]["edge_scores"]["port_a"][1]["risk_detail"]["alert_ids"] == []
     assert report["dashboard"]["has_data"] is True
     saved = json.loads(config.report_path.read_text(encoding="utf-8"))

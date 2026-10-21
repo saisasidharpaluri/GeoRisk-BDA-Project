@@ -31,6 +31,9 @@ header[data-testid="stHeader"] { background: transparent; }
   background: #E3ECEE; border: 1px solid var(--gr-rule); border-radius: 3px; padding: .25rem .5rem; }
 .gr-badge.stamp { color: var(--gr-magenta); border-color: var(--gr-magenta); background: transparent;
   font-weight: 600; letter-spacing: .1em; }
+.gr-badge.live { color: #FFFFFF; background: var(--gr-red); border-color: var(--gr-red);
+  font-weight: 600; letter-spacing: .1em; animation: gr-pulse 1.6s ease-in-out infinite; }
+@keyframes gr-pulse { 50% { opacity: .55; } }
 
 /* Pipeline strip */
 .gr-flow-title { font: 600 .74rem/1.3 'IBM Plex Mono', monospace; letter-spacing: .14em;
@@ -56,6 +59,9 @@ header[data-testid="stHeader"] { background: transparent; }
 [data-testid="stMain"] [data-testid="stMetricLabel"] p { font-size: .74rem; letter-spacing: .07em;
   text-transform: uppercase; color: var(--gr-slate); }
 [data-testid="stMetricValue"] { font-family: 'IBM Plex Mono', monospace; font-weight: 500; }
+
+/* Scenario clock */
+.gr-clock { font: 600 2rem/1.1 'IBM Plex Mono', monospace; color: var(--gr-ink); margin: .2rem 0 .4rem; }
 
 /* Key-value lists (freshness, inspector) */
 .gr-kv { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; margin: .4rem 0 0;
@@ -103,12 +109,14 @@ header[data-testid="stHeader"] { background: transparent; }
 LEGEND = {
     "vessels": '<span><i class="gr-key dot" style="background:#14232E"></i>Vessel</span>'
     '<span><i class="gr-key dot" style="background:#E03A1E"></i>Vessel inside a hazard</span>',
+    "tracks": '<span><i class="gr-key line" style="background:rgba(20,35,46,.45);height:2px">'
+    "</i>Track so far</span>",
     "hazards": '<span><i class="gr-key zone"></i>Active hazard zone</span>',
     "risk_cells": '<span><i class="gr-key hex" style="background:#A8166F"></i>'
-    "Alerted H3 cell (whole scenario)</span>",
+    "Alerted H3 cell (so far)</span>",
     "density": '<span><i class="gr-key hex" '
     'style="background:linear-gradient(90deg,#9CC9DB,#1D5C80)">'
-    "</i>Unique vessels per cell (height, selected window)</span>",
+    "</i>Unique vessels per cell (height, current window)</span>",
     "route": '<span><i class="gr-key line" style="background:#5B6B78"></i>Baseline (fastest)</span>'
     '<span><i class="gr-key line" style="background:#0E7C66"></i>Alternative (risk-aware)</span>',
 }

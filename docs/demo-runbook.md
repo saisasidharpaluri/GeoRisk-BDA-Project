@@ -47,6 +47,22 @@ activated terminal, a rerun of that command refreshes them. Optional
 `georisk spark-stream` drains the replay into its separate Parquet sink when
 PySpark/Java are installed; it is not a live JSONL dashboard feed.
 
+## Live stream (recommended opening)
+
+```powershell
+georisk live --vessels 300 --tick-seconds 2   # terminal 1
+georisk dashboard                             # terminal 2, once streaming starts
+```
+
+The dashboard shows a pulsing LIVE STREAM badge, the clock follows the newest
+micro-batch, and Data freshness shows the step, batches, throughput, and batch
+latency. The 24 steps take about a minute; then the run writes the lake,
+trains the model, and writes the report, and the badge changes to "Streamed
+live in 24 micro-batches". Explain that the producer and consumer are
+decoupled by atomic batch files (the local stand-in for Kinesis) and that the
+final outputs equal a batch run's. If the dashboard was opened first, reload
+the page or turn on auto-refresh.
+
 ## Presentation sequence and clicks
 
 The sidebar's "Presenter guide" lists the same steps.
@@ -56,24 +72,30 @@ The sidebar's "Presenter guide" lists the same steps.
    five pipeline cards left to right: ingest → H3 index → risk match → density
    → analytics. Data freshness shows Fresh right after `georisk run`; the large
    processing lag is explained in the panel (seeded January 2026 data).
-2. **KPIs and Live map.** The KPIs describe the latest report (13:55 UTC in
-   the default run) and the whole scenario. On the map, red vessels are inside
-   an active hazard, magenta hexagons are cells alerted at any time, and blue
-   columns are the selected density window. Toggle layers in the sidebar, then
-   click a vessel or hazard zone to show its Inspect card.
+2. **Scenario clock and Live map.** Turn on *Play scenario* in the sidebar:
+   the clock steps through the run (5 minutes every 1.5 s), vessels move and
+   leave tracks, H2 high waves appears at 12:30 and expires at 13:30, and
+   vessels turn red inside a hazard while the KPIs and route decision update.
+   Explain that this replays the processed run rather than processing new data.
+   Turn Play off, drag the clock to 12:30, and click a vessel or hazard zone to
+   show its Inspect card. Magenta hexagons are cells alerted so far; blue
+   columns are unique vessels in the current density window.
 3. **Hazard exposure.** Show the vessels-in-hazard timeline, then select a
    hazard type, raise Minimum severity, and narrow the time range; the severity
    chart and table follow the filters. The acceptance scenarios (Run quality)
    cover inside/outside and expired-hazard behaviour.
-4. **Corridor density.** Explain unique vessels per cell and window, move the
-   Window slider, and show that the map's columns follow it. Compare the
+4. **Corridor density.** Explain unique vessels per cell and window and move
+   the Window slider (the map's columns follow the scenario clock). Compare the
    previous/next windows (a quiet window shows 0; blank only outside the
    processed range).
 5. **Delay model.** Compare Model MAE (h) with Baseline MAE (h) and the error
    reduction. Use the scatter and its diagonal to explain that the remaining
    error is the label noise; show the formula, then toggle "Demo mode: show
    synthetic ground truth".
-6. **Route decision.** In the sidebar Route what-if, choose No hazards, then
+6. **Route decision.** With the clock at 12:00 the detour uses the outer lane;
+   from 12:30 to 13:30 high waves (H2) close the outer lane's first leg and the
+   detour re-plans through the junction cut-across. In the sidebar Route
+   what-if, choose No hazards, then
    Close inner lane, and compare the baseline and alternative cards and the
    lane table. Set the threshold to 1.0 to keep the baseline; a threshold near
    0 blocks every path and shows "No eligible route". Return to As generated

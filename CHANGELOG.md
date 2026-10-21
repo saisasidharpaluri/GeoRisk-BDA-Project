@@ -12,6 +12,31 @@
   CI for Python 3.10–3.13 plus a Python 3.11/Java 17 Spark job.
 - An 85% statement-coverage gate, omitting the AWS deployment module only.
 
+### Added (live mode, scale, routing, 2026-10-21)
+
+- `georisk live`: a producer thread streams the scenario as timed atomic
+  micro-batches; a consumer processes each batch incrementally and updates
+  the dashboard files, then the run finishes like `georisk run`. Progress,
+  throughput, and batch latency are recorded in `run-metadata.json` and the
+  report. New setting `GEORISK_LIVE_TICK_SECONDS`.
+- `StreamProcessor`: incremental form of `process_events` (which now uses it);
+  micro-batches in time order give the same outputs as one batch.
+- The dashboard follows a running live stream (LIVE badge, clock pinned to the
+  newest batch, 2 s refresh) and marks the model and report as pending.
+- Route graph gains a junction and a cut-across to the outer waypoint, so the
+  detour re-plans while high waves close the outer lane instead of reporting
+  no safe route.
+
+### Changed (2026-10-21)
+
+- Processed outputs are replaced atomically and `run-metadata.json` is written
+  last, so readers never see partial files.
+- The file publisher flushes alert batches before telemetry batches.
+- Dashboard reruns at 300–500 vessels are about 2–3× faster: cached file
+  reads and timestamp parsing, and chart data passed as a DataFrame.
+- Inspect lists vessels inside a hazard in a caption; the selectbox no longer
+  carries status text, which the browser could show stale.
+
 ### Changed (dashboard presentation, 2026-10-16)
 
 - Dashboard reorganised for presentation: header with a plain-language summary
@@ -22,6 +47,8 @@
   accounting, settings, history).
 - Chart axes are labelled in UTC; previously the browser shifted them into
   the viewer's local time zone while the axis said UTC.
+- Scenario clock with Play: replays the processed run step by step; the
+  KPIs, map (with vessel tracks), inspector, and route decision follow it.
 - New charts: vessels-in-hazard timeline, density trend, and a
   prediction-vs-label scatter with a reference diagonal. Route results show
   map labels instead of node IDs; the map centres on the route network.

@@ -11,7 +11,7 @@ from typing import Any
 from georisk.config import GeoRiskConfig, load_env_file
 from georisk.contracts import SCHEMA_VERSION
 from georisk.geo_demo import DEMO_NODES
-from georisk.ingestion.generator import write_jsonl
+from georisk.ingestion.generator import ReplayStats, write_jsonl
 from georisk.ingestion.scenario import ScenarioConfig, generate_scenario
 from georisk.logging_utils import configure_logging
 from georisk.operations import acceptance_checks, artifact_manifest
@@ -34,10 +34,9 @@ from georisk.storage_analytics.lake import density_summary, risk_summary, write_
 logger = logging.getLogger(__name__)
 
 
-def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
-    """Run generation, processing, lake writes, model evaluation, and routing."""
-    settings = config or GeoRiskConfig.from_env()
-    events = generate_scenario(
+def scenario_events(settings: GeoRiskConfig) -> dict[str, list[dict[str, Any]]]:
+    """Generate the configured deterministic scenario."""
+    return generate_scenario(
         ScenarioConfig(
             seed=settings.seed,
             vessel_count=settings.vessel_count,
@@ -45,6 +44,12 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             interval_seconds=settings.telemetry_interval_seconds,
         )
     )
+
+
+def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
+    """Run generation, processing, lake writes, model evaluation, and routing."""
+    settings = config or GeoRiskConfig.from_env()
+    events = scenario_events(settings)
     generation_stats = write_jsonl(events, settings.input_dir)
     logger.info(
         "Generation complete",
@@ -68,6 +73,22 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             "strict": settings.strict_validation,
         }
     )
+    return finish_run(settings, events, generation_stats, processed)
+
+
+def finish_run(
+    settings: GeoRiskConfig,
+    events: dict[str, list[dict[str, Any]]],
+    generation_stats: ReplayStats,
+    processed: dict[str, Any],
+    *,
+    live: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write the lake, train the delay model, score routes, and write the run report.
+
+    ``processed`` must already be written to ``settings.processed_dir``.
+    ``live`` adds the live-stream statistics to the report.
+    """
     lake_paths = {
         name: write_partitioned(records, settings.lake_dir, dataset_name=name, replace_batch=True)
         for name, records in {
@@ -246,6 +267,8 @@ def run_end_to_end(config: GeoRiskConfig | None = None) -> dict[str, Any]:
             allowed_lateness_minutes=settings.allowed_lateness_minutes,
         ),
     }
+    if live is not None:
+        report["live"] = live
     report["acceptance"] = acceptance_checks(report)
     settings.report_path.parent.mkdir(parents=True, exist_ok=True)
     settings.report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")

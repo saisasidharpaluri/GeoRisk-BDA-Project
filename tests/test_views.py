@@ -265,11 +265,13 @@ def test_close_inner_lane_forces_detour():
     route = find_alternative_route(graph, "port_a", "port_b", 0.5)
     assert route["route_changed"] is True
     status = {row["lane"]: row for row in lane_status(graph, route)}
-    assert status["port_a → chokepoint"]["status"] == "blocked"
-    assert "WHAT-IF-CLOSURE" in status["port_a → chokepoint"]["risk_detail"]
+    assert status["junction → chokepoint"]["status"] == "blocked"
+    assert "WHAT-IF-CLOSURE" in status["junction → chokepoint"]["risk_detail"]
     assert status["port_a → outer_lane"]["status"] == "open"
     assert status["port_a → outer_lane"]["used_by"] == "alternative"
-    assert status["port_a → chokepoint"]["used_by"] == "baseline"
+    assert status["junction → chokepoint"]["used_by"] == "baseline"
+    assert status["port_a → junction"]["used_by"] == "baseline"
+    assert status["junction → outer_lane"]["used_by"] == "—"
 
 
 def test_exposure_series_counts_distinct_vessels_per_time():
@@ -454,3 +456,29 @@ def test_count_by_and_acceptance_summary():
     assert summary["checks"][0]["check"] == "run status"
     assert acceptance_summary(None) is None
     assert acceptance_summary({"acceptance": "bad"}) is None
+
+
+def test_replay_helpers_follow_the_scenario_clock():
+    from georisk.route_dashboard.views import (
+        scenario_times,
+        up_to,
+        vessel_tracks,
+        window_containing,
+    )
+
+    telemetry = [
+        {"vessel_id": "a", "event_time": "2026-01-01T12:05:00Z", "latitude": 2, "longitude": 20},
+        {"vessel_id": "a", "event_time": "2026-01-01T12:00:00Z", "latitude": 1, "longitude": 10},
+        {"vessel_id": "b", "event_time": "2026-01-01T12:10:00Z", "latitude": 3, "longitude": 30},
+    ]
+    assert scenario_times(telemetry) == [
+        "2026-01-01T12:00:00Z",
+        "2026-01-01T12:05:00Z",
+        "2026-01-01T12:10:00Z",
+    ]
+    assert [row["vessel_id"] for row in up_to(telemetry, "2026-01-01T12:05:00Z")] == ["a", "a"]
+    assert vessel_tracks(telemetry, "2026-01-01T12:07:00Z") == {"a": [[10, 1], [20, 2]]}
+    density = [_density("c1", "12:00", 1), _density("c1", "12:15", 2)]
+    assert window_containing(density, "2026-01-01T12:14:59Z") == "2026-01-01T12:00:00Z"
+    assert window_containing(density, "2026-01-01T12:15:00Z") == "2026-01-01T12:15:00Z"
+    assert window_containing(density, "2026-01-01T13:00:00Z") is None

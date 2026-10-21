@@ -276,7 +276,7 @@ see the README).
 - AWS is not deployed, so the guide's "query density with Athena" criterion
   is not met yet.
 - All data, labels, routes, and metrics are synthetic. H3 matching is
-  approximate, and the route graph is a four-node demonstration.
+  approximate, and the route graph is a five-node demonstration.
 
 ## 10. Viva-ready answers
 

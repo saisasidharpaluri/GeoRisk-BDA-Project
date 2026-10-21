@@ -6,6 +6,9 @@ import math
 
 DEMO_NODES = {
     "port_a": (13.10, 80.45),
+    # On the inner lane west of the storm; its link north to the outer waypoint
+    # passes clear of both default hazards.
+    "junction": (13.10, 80.95),
     "chokepoint": (13.10, 81.20),
     "outer_lane": (13.80, 81.40),
     "port_b": (13.10, 82.00),

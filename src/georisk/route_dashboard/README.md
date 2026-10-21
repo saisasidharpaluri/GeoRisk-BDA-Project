@@ -31,6 +31,14 @@ Coordinate with Member 3 on Athena query results and field names. Coordinate wit
 
 Route comparisons report all edges above the risk threshold, identify those on the baseline path, and explain the detour with travel-time and total-risk differences.
 
+`demonstration_graph()` has five nodes and three routes between the ports:
+the inner lane (Port A → Junction → Chokepoint → Port B), the outer lane
+(Port A → Outer waypoint → Port B), and a cut-across from the junction to the
+outer waypoint that passes clear of both default hazards. In the default
+scenario the storm keeps the inner lane closed, so the detour takes the outer
+lane, switches to the cut-across while high waves cover the first outer leg
+(12:30–13:30), and returns afterwards.
+
 `demonstration_nodes()` returns offshore Chennai coordinates. Each graph edge
 includes `distance_nm` and travel hours at 14 knots. The baseline is always the
 unrestricted fastest path. When every edge it takes is within the threshold,
@@ -102,23 +110,33 @@ The page reads top to bottom as a presentation:
    For the seeded historical data a note explains the large processing lag.
 2. **Pipeline strip** – one card per stage (ingest, H3 index, risk match,
    corridor density, analytics) with the counts this run produced.
-3. **KPI row** – active alerts and vessels inside a hazard at the latest
-   report, alerted positions over the whole scenario, and the route decision
-   (detour, keep baseline, or no safe route).
-4. **Live map and Inspect** – PyDeck layers with one sidebar checkbox each and
-   a legend for the visible layers. The caption states which layers show the
-   latest moment (vessels, hazard zones) and which summarise the scenario
-   (alerted H3 cells) or the selected density window. Clicking a vessel or
+3. **Scenario clock** – a slider over the scenario's report times (default:
+   the latest). The sidebar's "Play scenario" toggle advances it one report
+   every 1.5 s (`st.fragment(run_every=…)`) and loops. It replays the processed
+   run; it does not process new data. The KPIs, map, inspector, and route
+   decision follow the clock; the pipeline strip and the tabs cover the whole
+   run. While `georisk live` is streaming (`run-metadata.json` has a `live`
+   block updated within the last two minutes), the page refreshes every 2 s,
+   shows a LIVE STREAM badge, pins the clock to the newest batch, and shows the
+   step, batches, throughput, and latency under Data freshness; the delay
+   model and run report are marked as pending until the stream finishes.
+4. **KPI row** – active alerts and vessels inside a hazard at the clock time,
+   alerted positions up to that time, and the route decision (detour, keep
+   baseline, or no safe route) scored at that time.
+5. **Live map and Inspect** – PyDeck layers with one sidebar checkbox each and
+   a legend for the visible layers: vessel positions and their tracks so far,
+   hazard zones active at the clock time, H3 cells alerted so far, and unique
+   vessels per cell in the density window containing the clock time. Clicking a vessel or
    zone fills the Inspect panel with a readable card: status pill, position,
    speed, heading, H3 cell, current hazards, and exposure history for a
    vessel; state and time left, severity, validity, H3 coverage, and vessels
    inside for an alert.
-5. **Tabs**, one per analytic product:
+6. **Tabs**, one per analytic product:
    - *Hazard exposure* ("Risk summary") – filters for hazard type, minimum
      severity, and time; a vessels-in-hazard timeline; a severity chart that
      follows the filters; and the alerted-position table.
    - *Corridor density* – busiest-cell and occupied-cell trend, a window
-     slider that also drives the map, the window's busiest cells, and a
+     slider for the tables, the window's busiest cells, and a
      comparison with the calendar-adjacent windows (a quiet neighbour shows 0;
      blank only outside the processed range).
    - *Delay model* ("Delay estimates") – model and baseline MAE, error
@@ -128,7 +146,7 @@ The page reads top to bottom as a presentation:
    - *Route decision* ("Route comparison") – the explanation, side-by-side
      baseline and alternative cards (sailing hours, risk, penalised cost, with
      deltas), and lane status with risk drivers. Node IDs are shown with their
-     map labels (Port A, Chokepoint, Outer waypoint, Port B).
+     map labels (Port A, Junction, Chokepoint, Outer waypoint, Port B).
    - *Run quality* – acceptance checks from the run report (path under
      "Data sources", default `GEORISK_REPORT_PATH`), record accounting
      (positions, alerts, quarantined, duplicates, late, future), quarantine
@@ -140,7 +158,8 @@ would otherwise shift datetimes into the viewer's local time zone. Timestamps
 in text use `format_time` / `format_datetime`, and durations use
 `humanize_minutes`.
 
-The sidebar holds a "Presenter guide", the "Route what-if" group (hazard
+The sidebar holds a "Presenter guide", the "Scenario replay" toggle, the
+"Route what-if" group (hazard
 scenario, risk threshold, penalty), map layers, "Auto-refresh every 10 s"
 (reruns the data-dependent body with `st.fragment(run_every=10)`), and a
 collapsed "Data sources" expander.

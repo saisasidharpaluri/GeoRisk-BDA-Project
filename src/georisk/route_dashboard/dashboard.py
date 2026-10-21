@@ -53,16 +53,26 @@ from georisk.route_dashboard.views import (
     latest_positions,
     latest_risk_by_vessel,
     latest_timestamp,
+    live_state,
+    read_jsonl,
     risk_table_rows,
     route_scenario_alerts,
+    scenario_times,
     severity_distribution,
     time_span,
+    up_to,
     vessel_exposure,
+    vessel_tracks,
     vessels_inside,
+    window_containing,
 )
+
+PLAY_INTERVAL_SECONDS = 1.5
+LIVE_REFRESH_SECONDS = 2.0
 
 MAP_LAYERS = (
     ("vessels", "Vessels"),
+    ("tracks", "Vessel tracks"),
     ("hazards", "Hazard zones"),
     ("risk_cells", "Alerted H3 cells"),
     ("density", "Corridor density"),
@@ -73,24 +83,6 @@ TABS = ("Hazard exposure", "Corridor density", "Delay model", "Route decision", 
 
 
 # --- Data loading (no Streamlit dependency) --------------------------------
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows = []
-    with path.open(encoding="utf-8") as source:
-        for line_number, line in enumerate(source, 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid JSON in {path}:{line_number}") from exc
-            if not isinstance(record, dict):
-                raise ValueError(f"expected an object in {path}:{line_number}")
-            rows.append(record)
-    return rows
 
 
 def load_dashboard_data(
@@ -104,10 +96,10 @@ def load_dashboard_data(
     inputs = Path(input_dir) if input_dir is not None else base / "data"
     processed = Path(processed_dir) if processed_dir is not None else base / "processed"
     return {
-        "telemetry": _read_jsonl(inputs / "vessel-telemetry.jsonl"),
-        "weather_alerts": _read_jsonl(inputs / "weather-alerts.jsonl"),
-        "risk_events": _read_jsonl(processed / "risk-events.jsonl"),
-        "density_metrics": _read_jsonl(processed / "density-metrics.jsonl"),
+        "telemetry": read_jsonl(inputs / "vessel-telemetry.jsonl"),
+        "weather_alerts": read_jsonl(inputs / "weather-alerts.jsonl"),
+        "risk_events": read_jsonl(processed / "risk-events.jsonl"),
+        "density_metrics": read_jsonl(processed / "density-metrics.jsonl"),
     }
 
 
@@ -152,12 +144,14 @@ def dashboard_route(
     risk_threshold: float,
     risk_penalty: float,
     alerts: list[dict[str, Any]] | None = None,
+    at_time: str | None = None,
 ) -> dict[str, Any] | None:
-    """Score the demo graph at the latest telemetry time for the UI and report.
+    """Score the demo graph at ``at_time`` (default: latest telemetry) for the UI and report.
 
     ``alerts`` replaces the loaded weather alerts, for what-if scenarios.
     """
-    at_time = latest_timestamp(event["event_time"] for event in data["telemetry"])
+    if at_time is None:
+        at_time = latest_timestamp(event["event_time"] for event in data["telemetry"])
     if at_time is None:
         return None
     graph = score_graph(
@@ -197,14 +191,14 @@ def load_run_report(report_path: str | Path) -> dict[str, Any] | None:
 def load_quarantine(processed_dir: str | Path) -> list[dict[str, Any]]:
     """Load quarantined records; a missing or unreadable file returns an empty list."""
     try:
-        return _read_jsonl(Path(processed_dir) / "quarantine.jsonl")
+        return read_jsonl(Path(processed_dir) / "quarantine.jsonl")
     except (OSError, ValueError):
         return []
 
 
 def load_delay_estimates(processed_dir: str | Path) -> list[dict[str, Any]]:
     """Load persisted delay estimates; a missing file returns an empty list."""
-    return _read_jsonl(Path(processed_dir) / "delay-estimates.jsonl")
+    return read_jsonl(Path(processed_dir) / "delay-estimates.jsonl")
 
 
 def effective_settings(settings: GeoRiskConfig, metadata: dict[str, Any] | None) -> GeoRiskConfig:
@@ -303,6 +297,7 @@ def _render_header(
     st: Any,
     settings: GeoRiskConfig,
     data: dict[str, list[dict[str, Any]]],
+    live: dict[str, Any] | None = None,
 ) -> None:
     span = time_span(data["telemetry"])
     scenario = (
@@ -319,6 +314,10 @@ def _render_header(
         ("", f"{settings.coverage_mode} coverage"),
         ("", f"{settings.density_window_minutes}-minute density windows"),
     ]
+    if live and live["following"]:
+        badges.insert(1, ("live", "● LIVE STREAM"))
+    elif live and live.get("status") == "complete":
+        badges.insert(1, ("", f"Streamed live in {live.get('batches', 0)} micro-batches"))
     st.html(
         '<p class="gr-eyebrow">Big Data Analytics · Bay of Bengal, offshore Chennai</p>'
         '<h1 class="gr-title">GeoRisk-Spark</h1>'
@@ -331,7 +330,47 @@ def _render_header(
     )
 
 
-def _render_freshness(st: Any, metadata: dict[str, Any] | None, settings: GeoRiskConfig) -> None:
+def _live_rows(st: Any, live: dict[str, Any]) -> list[tuple[str, Any]]:
+    """Show the live run's state and return its throughput rows for the freshness card."""
+    step = f"step {live.get('ticks_published', 0)} of {live.get('ticks_total', '?')}"
+    status = live.get("status")
+    if live["stalled"]:
+        st.warning(
+            f"Live run stopped updating at {step}. Restart `georisk live`, or run "
+            "`georisk run` for a complete batch run.",
+            icon=":material/sensors_off:",
+        )
+    elif status == "running":
+        st.info(
+            f"Live stream · {step} · {live.get('events_processed', 0):,} events processed",
+            icon=":material/sensors:",
+        )
+    elif status == "finishing":
+        st.info(
+            "Live stream finished · writing the lake, training the delay model, and "
+            "checking acceptance…",
+            icon=":material/hourglass_top:",
+        )
+    elif status == "stopped":
+        st.warning(
+            f"Live run was stopped at {step}; these outputs are partial.",
+            icon=":material/sensors_off:",
+        )
+    throughput = live.get("throughput_events_per_second")
+    latency = live.get("last_batch_latency_ms")
+    return [
+        ("Live batches", f"{live.get('batches', 0)} ({live.get('batch_files', 0)} files)"),
+        ("Throughput", f"{throughput:,} events/s" if throughput else None),
+        ("Batch latency", f"{latency:.0f} ms" if latency is not None else None),
+    ]
+
+
+def _render_freshness(
+    st: Any,
+    metadata: dict[str, Any] | None,
+    settings: GeoRiskConfig,
+    live: dict[str, Any] | None = None,
+) -> None:
     status = freshness(metadata, datetime.now(timezone.utc), settings.stale_after_minutes)
     with st.container(border=True, key="freshness"):
         st.subheader("Data freshness")
@@ -350,6 +389,7 @@ def _render_freshness(st: Any, metadata: dict[str, Any] | None, settings: GeoRis
                 "Run `georisk run` to create it.",
                 icon=":material/error:",
             )
+        live_rows = _live_rows(st, live) if live else []
         lag = status["processing_lag_minutes"]
         note = (
             '<p class="gr-note">Event times come from a seeded historical scenario, so the '
@@ -364,6 +404,7 @@ def _render_freshness(st: Any, metadata: dict[str, Any] | None, settings: GeoRis
                     ("Latest event", format_datetime(status["latest_event_time"])),
                     ("Watermark", format_datetime(status["watermark"])),
                     ("Processing lag", humanize_minutes(lag) if lag is not None else None),
+                    *live_rows,
                 ]
             )
             + note
@@ -469,20 +510,22 @@ def _render_kpis(
             "Active alerts",
             len(alerts),
             f"{now}: {_hazard_names(alerts)}",
-            "Alerts whose validity window contains the latest report time, using the "
+            "Alerts whose validity window contains the scenario-clock time, using the "
             "revision current at that time.",
         ),
         (
             "Vessels in a hazard",
             f"{len(exposed)} of {len(positions)}",
-            f"{now}. {len(ever_exposed)} were inside a hazard at some point.",
+            f"{now}. {len(ever_exposed)} have been inside a hazard so far.",
             "A vessel counts when its latest position matched an active hazard cell. "
             "See Hazard exposure for the count over time.",
         ),
         (
             "Alerted positions",
             f"{alerted} of {len(risk_events)}",
-            f"Whole scenario: {share} of position reports matched a hazard.",
+            f"Up to {format_time(latest)} UTC: {share} of reports matched a hazard."
+            if latest
+            else "No reports yet.",
             "Position reports whose H3 cell matched an active hazard.",
         ),
         (
@@ -527,6 +570,7 @@ def _render_map(
     route: dict[str, Any] | None,
     at_time: str | None,
     window: str | None,
+    tracks: dict[str, list[list[float]]],
 ) -> None:
     from georisk.route_dashboard import map_layers
 
@@ -536,10 +580,10 @@ def _render_map(
         return
     st.html(
         '<p class="gr-hint">'
-        f"Situation at <b>{escape(format_time(at_time))} UTC</b>, the latest position report: "
-        "vessel colours and hazard zones show that moment. Magenta hexagons summarise the "
-        "whole scenario; blue columns show the density window "
-        f"<b>{escape(format_time(window))} UTC</b> chosen in Corridor density. "
+        f"Situation at <b>{escape(format_time(at_time))} UTC</b> on the scenario clock: "
+        "vessels, their tracks, and hazard zones show that moment; magenta hexagons mark "
+        "cells alerted so far; blue columns count unique vessels in the "
+        f"<b>{escape(format_time(window))} UTC</b> density window. "
         "Hover for details, click a vessel or zone to inspect it.</p>"
     )
     built = map_layers.node_layers(demonstration_nodes())
@@ -551,6 +595,8 @@ def _render_map(
         built.append(map_layers.risk_cells_layer(risk_events))
     if layers["route"]:
         built.append(map_layers.route_layer(route, demonstration_nodes()))
+    if layers["tracks"]:
+        built.append(map_layers.tracks_layer(tracks, exposed))
     if layers["vessels"]:
         built.append(map_layers.vessels_layer(positions, exposed))
     st.pydeck_chart(
@@ -590,12 +636,15 @@ def _render_inspector(
     if vessel_ids:
         if st.session_state.get("inspect_vessel") not in vessel_ids:
             st.session_state.pop("inspect_vessel", None)
-        exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
-        vessel = st.selectbox(
-            "Inspect vessel",
-            vessel_ids,
-            key="inspect_vessel",
-            format_func=lambda v: f"{v} · inside a hazard" if v in exposed else v,
+        exposed = sorted(vessel for vessel, row in latest_risk.items() if row.get("risk_alert"))
+        # Status stays out of the option labels: the browser can keep showing a
+        # selected option's previous label when only its text changes.
+        vessel = st.selectbox("Inspect vessel", vessel_ids, key="inspect_vessel")
+        st.caption(
+            f"Inside a hazard now: {', '.join(exposed[:4])}"
+            + (f" and {len(exposed) - 4} more" if len(exposed) > 4 else "")
+            if exposed
+            else "No vessel is inside a hazard at this time."
         )
         position = next(row for row in positions if row["vessel_id"] == vessel)
         risk = latest_risk.get(vessel, {})
@@ -630,7 +679,7 @@ def _render_inspector(
                         )
                         or "None",
                     ),
-                    ("In a hazard", exposure),
+                    ("In a hazard so far", exposure),
                 ]
             )
         )
@@ -669,12 +718,12 @@ def _render_inspector(
                         "Coverage",
                         f"{cells} H3 cells (res {settings.resolution}, {settings.coverage_mode})",
                     ),
-                    ("Vessels inside", ", ".join(inside) or "None at the latest report"),
+                    ("Vessels inside", ", ".join(inside) or "None at this time"),
                 ]
             )
         )
     else:
-        st.info("No hazard alerts are active at the latest event time.")
+        st.info("No hazard alerts are active at this time on the scenario clock.")
 
 
 # --- Tabs -------------------------------------------------------------------
@@ -834,7 +883,7 @@ def _render_density_panel(
     window = windows[-1]
     if len(windows) > 1:
         window = st.select_slider(
-            "Window (UTC) — also drives the map's density columns",
+            "Window (UTC)",
             windows,
             value=windows[-1],
             key="density_window",
@@ -887,6 +936,7 @@ def _render_density_panel(
 def _prediction_chart(rows: list[dict[str, Any]]) -> Any:
     """Predicted vs synthetic label with a dashed y = x reference line."""
     import altair as alt
+    import pandas as pd
 
     points = [
         {"label": row["synthetic_label_hours"], "predicted": row["predicted_delay_hours"]}
@@ -896,7 +946,9 @@ def _prediction_chart(rows: list[dict[str, Any]]) -> Any:
     bottom = min(0.0, *(point["predicted"] for point in points))
     scale = alt.Scale(domain=[bottom, top])
     scatter = (
-        alt.Chart(alt.Data(values=points))
+        # A DataFrame is passed to the browser as a dataset; inline values would be
+        # schema-validated row by row on every rerun.
+        alt.Chart(pd.DataFrame(points))
         .mark_circle(size=60, opacity=0.75, color="#1D5C80")
         .encode(
             x=alt.X("label:Q", title="Synthetic label (h)", scale=scale),
@@ -915,9 +967,14 @@ def _prediction_chart(rows: list[dict[str, Any]]) -> Any:
     return (diagonal + scatter).properties(height=260)
 
 
-def _render_delay_panel(st: Any, estimates: list[dict[str, Any]]) -> None:
+def _render_delay_panel(
+    st: Any, estimates: list[dict[str, Any]], live: dict[str, Any] | None = None
+) -> None:
     st.subheader("Delay estimates")
     st.caption("Synthetic demonstration, not a real-world forecast.")
+    if not estimates and live and live.get("status") != "complete":
+        st.info("Delay estimates are trained when the live stream finishes.")
+        return
     if not estimates:
         st.info(
             "No delay estimates yet. Run `georisk run` to train the delay model and write "
@@ -1176,6 +1233,7 @@ def _render_quality_panel(
     quarantine: list[dict[str, Any]],
     settings: GeoRiskConfig,
     lake_dir: str | Path,
+    live: dict[str, Any] | None = None,
 ) -> None:
     st.subheader("Run quality")
     st.caption(
@@ -1183,7 +1241,13 @@ def _render_quality_panel(
         "report, record accounting, and the settings that produced the outputs."
     )
     summary = acceptance_summary(report)
-    if summary is None:
+    if live and live.get("status") != "complete":
+        st.info(
+            "The run report and acceptance checks are written when the live stream "
+            "finishes. Record accounting below is updated after every batch.",
+            icon=":material/sensors:",
+        )
+    elif summary is None:
         st.info(
             f"No run report found at {settings.report_path}. Run `georisk run`, or set the "
             "report path under Data sources in the sidebar."
@@ -1266,27 +1330,71 @@ def _render_quality_panel(
 # --- Page assembly -------------------------------------------------------------
 
 
-def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> None:
-    """Render everything that depends on loaded data; reruns alone when auto-refreshing."""
-    processed_dir = controls["processed_dir"]
-    data = load_dashboard_data(input_dir=controls["input_dir"], processed_dir=processed_dir)
-    metadata = load_run_metadata(processed_dir)
-    settings = effective_settings(settings, metadata)
-    summary = dashboard_summary(data, resolution=settings.resolution)
-    estimates = load_delay_estimates(processed_dir)
+def _render_clock(st: Any, times: list[str], playing: bool, following: bool = False) -> str | None:
+    """Scenario clock over the report times.
 
-    at_time = summary["latest_event_time"]
-    alerts = active_alerts(data["weather_alerts"], at_time) if at_time else []
-    positions = latest_positions(data["telemetry"])
-    latest_risk = latest_risk_by_vessel(data["risk_events"])
-    exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
-
-    scenario = controls["scenario"]
-    route_time = latest_timestamp(row["event_time"] for row in data["telemetry"]) or at_time
-    scenario_alerts = (
-        route_scenario_alerts(scenario, data["weather_alerts"], route_time) if route_time else []
+    While playing, advance one tick per rerun; while following a live run, stay
+    on the newest report time.
+    """
+    if not times:
+        return None
+    if following or st.session_state.get("scenario_time") not in times:
+        st.session_state["scenario_time"] = times[-1]
+    if playing and not following:
+        index = times.index(st.session_state["scenario_time"])
+        st.session_state["scenario_time"] = times[(index + 1) % len(times)]
+    step = (
+        humanize_minutes((_utc(times[1]) - _utc(times[0])).total_seconds() / 60)
+        if len(times) > 1
+        else "—"
     )
-    map_alerts = active_alerts(scenario_alerts, route_time) if route_time else []
+    with st.container(border=True, key="clock"):
+        label_column, slider_column = st.columns([1.2, 4], vertical_alignment="center")
+        with label_column:
+            if following:
+                state = '<span class="gr-pill alert">● Live · following the stream</span>'
+            elif playing:
+                state = (
+                    f'<span class="gr-pill alert">▶ Playing · +{step} / '
+                    f"{PLAY_INTERVAL_SECONDS:g} s</span>"
+                )
+            else:
+                state = '<span class="gr-pill muted">Paused · Play is in the sidebar</span>'
+
+            st.html(
+                '<p class="gr-step-name">Scenario clock (UTC)</p>'
+                f'<p class="gr-clock">{escape(format_time(st.session_state["scenario_time"]))}</p>'
+                + state
+            )
+        with slider_column:
+            st.select_slider(
+                "Scenario time (UTC)",
+                times,
+                key="scenario_time",
+                format_func=format_time,
+                label_visibility="collapsed",
+                disabled=following,
+                help="Replays the processed scenario: the KPIs, map, inspector, and route "
+                "decision show the situation at this time. Tabs below cover the whole run.",
+            )
+            st.caption(
+                "The clock follows the newest micro-batch of the live stream; drag it once "
+                "the stream has finished."
+                if following
+                else "Drag to any report time, or press Play in the sidebar. The KPIs, map, "
+                "inspector, and route decision follow this clock; the tabs below cover the "
+                "whole run."
+            )
+    return str(st.session_state["scenario_time"])
+
+
+def _route_at(
+    data: dict[str, list[dict[str, Any]]],
+    settings: GeoRiskConfig,
+    controls: dict[str, Any],
+    alerts: list[dict[str, Any]],
+    at_time: str | None,
+) -> tuple[dict[str, Any] | None, str | None]:
     try:
         route = dashboard_route(
             data,
@@ -1294,26 +1402,75 @@ def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> 
             coverage_mode=settings.coverage_mode,
             risk_threshold=controls["threshold"],
             risk_penalty=controls["penalty"],
-            alerts=scenario_alerts,
+            alerts=alerts,
+            at_time=at_time,
         )
-        route_error = None
     except ValueError as exc:
-        route, route_error = None, str(exc)
+        return None, str(exc)
+    return route, None
+
+
+def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> None:
+    """Render everything that depends on loaded data; reruns alone when refreshing or playing."""
+    processed_dir = controls["processed_dir"]
+    data = load_dashboard_data(input_dir=controls["input_dir"], processed_dir=processed_dir)
+    metadata = load_run_metadata(processed_dir)
+    live = live_state(metadata, datetime.now(timezone.utc))
+    following = bool(live and live["following"])
+    if following != controls.get("live_following", following):
+        st.rerun()  # switch between the live refresh rate and the normal page
+    settings = effective_settings(settings, metadata)
+    summary = dashboard_summary(data, resolution=settings.resolution)
+    estimates = load_delay_estimates(processed_dir)
+    scenario = controls["scenario"]
+    final_time = (
+        latest_timestamp(row["event_time"] for row in data["telemetry"])
+        or summary["latest_event_time"]
+    )
+    final_alerts = (
+        route_scenario_alerts(scenario, data["weather_alerts"], final_time) if final_time else []
+    )
+    final_route, final_error = _route_at(data, settings, controls, final_alerts, final_time)
 
     header_column, freshness_column = st.columns([2.2, 1], gap="large", vertical_alignment="top")
     with header_column:
-        _render_header(st, settings, data)
+        _render_header(st, settings, data, live)
     with freshness_column:
-        _render_freshness(st, metadata, settings)
+        _render_freshness(st, metadata, settings, live)
     _render_pipeline(
-        st, data=data, metadata=metadata, settings=settings, estimates=estimates, route=route
+        st, data=data, metadata=metadata, settings=settings, estimates=estimates, route=final_route
     )
+
+    # Everything from here to the tabs follows the scenario clock.
+    at_time = (
+        _render_clock(st, scenario_times(data["telemetry"]), controls["play"], following)
+        or final_time
+    )
+    if at_time:
+        telemetry_now = up_to(data["telemetry"], at_time)
+        risk_now = up_to(data["risk_events"], at_time)
+        scenario_alerts = route_scenario_alerts(scenario, data["weather_alerts"], at_time)
+        alerts = active_alerts(data["weather_alerts"], at_time)
+        map_alerts = active_alerts(scenario_alerts, at_time)
+        window = window_containing(data["density_metrics"], at_time)
+        tracks = vessel_tracks(data["telemetry"], at_time)
+    else:
+        telemetry_now, risk_now, scenario_alerts, alerts, map_alerts = [], [], [], [], []
+        window, tracks = None, {}
+    if at_time == final_time:  # the pipeline strip already scored this moment
+        route, route_error = final_route, final_error
+    else:
+        route, route_error = _route_at(data, settings, controls, scenario_alerts, at_time)
+    positions = latest_positions(telemetry_now)
+    latest_risk = latest_risk_by_vessel(risk_now)
+    exposed = {vessel for vessel, row in latest_risk.items() if row.get("risk_alert")}
+
     _render_kpis(
         st,
         alerts=alerts,
         exposed=exposed,
         positions=positions,
-        risk_events=data["risk_events"],
+        risk_events=risk_now,
         route=route,
         latest=at_time,
     )
@@ -1326,13 +1483,36 @@ def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> 
         )
 
     map_column, inspect_column = st.columns([2.6, 1], gap="medium")
+    with map_column:
+        _render_map(
+            st,
+            controls["layers"],
+            positions=positions,
+            exposed=exposed,
+            alerts=map_alerts,
+            risk_events=risk_now,
+            density_rows=density_for_window(data["density_metrics"], window) if window else [],
+            route=route,
+            at_time=at_time,
+            window=window,
+            tracks=tracks,
+        )
+        if scenario != ROUTE_SCENARIOS[0]:
+            st.caption(
+                f"Route what-if “{scenario}” is active: hazard zones and routes on the "
+                "map reflect the scenario, not the loaded alerts."
+            )
+    with inspect_column:
+        with st.container(height=700, border=True):
+            _render_inspector(st, positions, latest_risk, risk_now, map_alerts, at_time, settings)
+
     tabs = st.tabs(list(TABS))
     with tabs[0]:
         _render_risk_panel(st, data["risk_events"], settings)
     with tabs[1]:
-        window = _render_density_panel(st, data["density_metrics"], settings)
+        _render_density_panel(st, data["density_metrics"], settings)
     with tabs[2]:
-        _render_delay_panel(st, estimates)
+        _render_delay_panel(st, estimates, live)
     with tabs[3]:
         _render_route_panel(st, route, route_error, scenario)
     with tabs[4]:
@@ -1343,45 +1523,20 @@ def _render_body(st: Any, settings: GeoRiskConfig, controls: dict[str, Any]) -> 
             quarantine=load_quarantine(processed_dir),
             settings=settings,
             lake_dir=controls["lake_dir"],
+            live=live,
         )
-    density_rows = density_for_window(data["density_metrics"], window) if window else []
-    with map_column:
-        _render_map(
-            st,
-            controls["layers"],
-            positions=positions,
-            exposed=exposed,
-            alerts=map_alerts,
-            risk_events=data["risk_events"],
-            density_rows=density_rows,
-            route=route,
-            at_time=route_time,
-            window=window,
-        )
-        if scenario != ROUTE_SCENARIOS[0]:
-            st.caption(
-                f"Route what-if “{scenario}” is active: hazard zones and routes on the "
-                "map reflect the scenario, not the loaded alerts."
-            )
-    with inspect_column:
-        with st.container(height=700, border=True):
-            _render_inspector(
-                st,
-                positions,
-                latest_risk,
-                data["risk_events"],
-                map_alerts,
-                route_time,
-                settings,
-            )
 
 
 PRESENTER_GUIDE = """
 1. **Header and pipeline strip** – what the data is and how one run flows.
-2. **KPIs and map** – the situation at the latest report; red vessels are inside an
-   active hazard. Click a vessel or zone to inspect it.
+   For the live demo, start `georisk live` in a terminal first: the page shows a
+   LIVE badge and follows each micro-batch, then the run finishes like
+   `georisk run`.
+2. **Scenario clock** – press *Play scenario* in the sidebar: vessels move along
+   their lanes, hazards appear and expire, and vessels turn red inside a hazard.
+   Pause, then drag the clock to any time. Click a vessel or zone to inspect it.
 3. **Hazard exposure** – filter by type, severity, and time.
-4. **Corridor density** – move the window slider; the map follows.
+4. **Corridor density** – congestion trend and per-window busiest cells.
 5. **Delay model** – model vs mean baseline on held-out rows; toggle ground truth.
 6. **Route decision** – try *Close inner lane*, or a threshold of 1.0.
 7. **Run quality** – acceptance checks and record accounting.
@@ -1392,6 +1547,14 @@ def _sidebar_controls(st: Any, settings: GeoRiskConfig) -> dict[str, Any]:
     sidebar = st.sidebar
     with sidebar.expander("Presenter guide", icon=":material/slideshow:"):
         st.markdown(PRESENTER_GUIDE)
+    sidebar.subheader("Scenario replay")
+    play = sidebar.toggle(
+        "Play scenario",
+        key="play",
+        help=f"Advances the scenario clock one position report every "
+        f"{PLAY_INTERVAL_SECONDS:g} s and loops back to the start. This replays the processed "
+        "run; it does not process new data.",
+    )
     sidebar.subheader("Route what-if")
     scenario = sidebar.selectbox(
         "Hazard scenario",
@@ -1426,6 +1589,11 @@ def _sidebar_controls(st: Any, settings: GeoRiskConfig) -> dict[str, Any]:
         key="auto_refresh",
         help="Reload the files every 10 seconds while a replay or rerun is writing them.",
     )
+    sidebar.caption(
+        "A running `georisk live` stream is followed automatically (every "
+        f"{LIVE_REFRESH_SECONDS:g} s). Started it after opening this page? Turn on "
+        "auto-refresh or reload the page."
+    )
     with sidebar.expander("Data sources"):
         input_dir = st.text_input("Input directory", str(settings.input_dir), key="input_dir")
         processed_dir = st.text_input(
@@ -1434,6 +1602,7 @@ def _sidebar_controls(st: Any, settings: GeoRiskConfig) -> dict[str, Any]:
         lake_dir = st.text_input("Lake directory", str(settings.lake_dir), key="lake_dir")
         report_path = st.text_input("Run report", str(settings.report_path), key="report_path")
     return {
+        "play": play,
         "scenario": scenario,
         "threshold": threshold,
         "penalty": penalty,
@@ -1459,7 +1628,13 @@ def main() -> None:
     st.set_page_config(page_title="GeoRisk-Spark", page_icon=":material/sailing:", layout="wide")
     st.html(CSS)
     controls = _sidebar_controls(st, settings)
-    if controls["auto_refresh"]:
+    live = live_state(load_run_metadata(controls["processed_dir"]), datetime.now(timezone.utc))
+    controls["live_following"] = bool(live and live["following"])
+    if controls["live_following"]:
+        st.fragment(run_every=LIVE_REFRESH_SECONDS)(_render_body)(st, settings, controls)
+    elif controls["play"]:
+        st.fragment(run_every=PLAY_INTERVAL_SECONDS)(_render_body)(st, settings, controls)
+    elif controls["auto_refresh"]:
         st.fragment(run_every=10)(_render_body)(st, settings, controls)
     else:
         _render_body(st, settings, controls)

@@ -14,10 +14,10 @@ def test_blocked_edges_reported_when_threshold_exceeded():
     assert result["baseline"]["blocked_edges"] == []
     assert result["alternative"]["blocked_edges"] == [
         ["chokepoint", "port_b"],
-        ["port_a", "chokepoint"],
+        ["junction", "chokepoint"],
     ]
     assert result["baseline_blocked_edges"] == [
-        ["port_a", "chokepoint"],
+        ["junction", "chokepoint"],
         ["chokepoint", "port_b"],
     ]
 
@@ -32,16 +32,16 @@ def test_no_blocked_edges_at_threshold_one():
 def test_explanation_names_blocked_edges():
     result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
     assert result["explanation"] == (
-        "Edges above risk threshold 0.50 were unavailable: port_a→chokepoint (0.90), "
+        "Edges above risk threshold 0.50 were unavailable: junction→chokepoint (0.90), "
         "chokepoint→port_b (0.90). "
-        "Alternative adds +2.4 h and changes total risk by -1.60."
+        "Alternative adds +2.4 h and changes total risk by -1.70."
     )
 
 
 def test_demonstration_route_changes_when_risky_lane_is_blocked():
     result = find_alternative_route(demonstration_graph(), "port_a", "port_b", 0.5)
 
-    assert result["baseline"]["path"] == ["port_a", "chokepoint", "port_b"]
+    assert result["baseline"]["path"] == ["port_a", "junction", "chokepoint", "port_b"]
     assert result["alternative"]["path"] == ["port_a", "outer_lane", "port_b"]
     assert result["route_changed"] is True
     assert result["alternative"]["travel_hours"] > result["baseline"]["travel_hours"]

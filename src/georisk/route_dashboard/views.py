@@ -1,7 +1,8 @@
-"""Pure view helpers that shape pipeline outputs for the dashboard."""
+"""View helpers that shape pipeline outputs for the dashboard, and cached file readers."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +13,45 @@ from georisk.geo_demo import DEMO_NODES
 from georisk.processing.stream_job import alert_revisions
 
 ROUTE_SCENARIOS = ("As generated", "No hazards", "Close inner lane")
+# A live run whose metadata has not been updated for this long is treated as stopped.
+LIVE_STALL_SECONDS = 120
+
+# Streamlit re-executes the dashboard script on every rerun, so its own globals
+# reset; these caches live here and survive reruns. Entries are reused only
+# while the files they were read from are unchanged.
+_JSONL_CACHE: dict[Path, tuple[int, int, list[dict[str, Any]]]] = {}
+_HISTORY_CACHE: dict[str, tuple[tuple[tuple[str, int, int], ...], list[dict[str, Any]]]] = {}
+
+
+def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    """Read a JSONL file of objects; a missing file is empty.
+
+    Parsed rows are cached until the file's size or modification time changes.
+    Callers receive a new list but share the row dicts, which the dashboard
+    never modifies.
+    """
+    target = Path(path)
+    try:
+        stat = target.stat()
+    except FileNotFoundError:
+        return []
+    cached = _JSONL_CACHE.get(target)
+    if cached is not None and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+        return list(cached[2])
+    rows = []
+    with target.open(encoding="utf-8") as source:
+        for line_number, line in enumerate(source, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid JSON in {target}:{line_number}") from exc
+            if not isinstance(record, dict):
+                raise ValueError(f"expected an object in {target}:{line_number}")
+            rows.append(record)
+    _JSONL_CACHE[target] = (stat.st_mtime_ns, stat.st_size, rows)
+    return list(rows)
 
 
 def _utc(value: str | datetime) -> datetime:
@@ -170,6 +210,25 @@ def latest_positions(telemetry: Iterable[Mapping[str, Any]]) -> list[dict[str, A
 def latest_risk_by_vessel(risk_events: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     """Return each vessel's most recent risk event."""
     return {row["vessel_id"]: row for row in latest_positions(risk_events)}
+
+
+def live_state(metadata: Mapping[str, Any] | None, now: datetime) -> dict[str, Any] | None:
+    """Return a live run's progress, or ``None`` when the outputs come from a batch run.
+
+    ``following`` is true while ``georisk live`` is still streaming or finishing
+    and has updated its metadata within ``LIVE_STALL_SECONDS``; ``stalled``
+    marks a run that claims to be active but has stopped updating.
+    """
+    live = (metadata or {}).get("live")
+    if not isinstance(live, Mapping):
+        return None
+    active = live.get("status") in ("running", "finishing")
+    try:
+        quiet = (_utc(now) - _utc(live["updated_at"])).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        quiet = None
+    following = active and quiet is not None and quiet <= LIVE_STALL_SECONDS
+    return {**live, "following": following, "stalled": active and not following}
 
 
 def freshness(
@@ -378,7 +437,31 @@ def exposure_series(risk_events: Iterable[Mapping[str, Any]]) -> list[dict[str, 
 
 
 def daily_history(lake_dir: str | Path) -> list[dict[str, Any]]:
-    """Summarise the curated lake per ``event_date``; an empty lake returns []."""
+    """Summarise the curated lake per ``event_date``; an empty lake returns [].
+
+    A local lake's summary is cached until any of its Parquet files changes.
+    """
+    root = Path(lake_dir)
+    signature = (
+        tuple(
+            sorted(
+                (str(path), path.stat().st_mtime_ns, path.stat().st_size)
+                for path in root.rglob("*.parquet")
+            )
+        )
+        if root.is_dir()
+        else ()
+    )
+    cached = _HISTORY_CACHE.get(str(lake_dir))
+    if signature and cached is not None and cached[0] == signature:
+        return [dict(row) for row in cached[1]]
+    history = _daily_history(lake_dir)
+    if signature:
+        _HISTORY_CACHE[str(lake_dir)] = (signature, history)
+    return [dict(row) for row in history]
+
+
+def _daily_history(lake_dir: str | Path) -> list[dict[str, Any]]:
     from georisk.storage_analytics.lake import read_dataset
 
     days: dict[str, dict[str, Any]] = {}
@@ -550,3 +633,43 @@ def chart_time_labels(values: Iterable[str | datetime]) -> list[str]:
     instants = [_utc(value) for value in values]
     single_day = len({instant.date() for instant in instants}) <= 1
     return [instant.strftime("%H:%M" if single_day else "%m-%d %H:%M") for instant in instants]
+
+
+# --- Scenario replay helpers ----------------------------------------------
+
+
+def scenario_times(telemetry: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Distinct telemetry timestamps in chronological order: the replay clock's ticks."""
+    return sorted({row["event_time"] for row in telemetry}, key=_utc)
+
+
+def up_to(rows: Iterable[Mapping[str, Any]], at_time: str | datetime) -> list[dict[str, Any]]:
+    """Rows whose ``event_time`` is at or before ``at_time``."""
+    limit = _utc(at_time)
+    return [dict(row) for row in rows if _utc(row["event_time"]) <= limit]
+
+
+def vessel_tracks(
+    telemetry: Iterable[Mapping[str, Any]], at_time: str | datetime
+) -> dict[str, list[list[float]]]:
+    """Each vessel's ``[lon, lat]`` track up to ``at_time``, oldest first."""
+    tracks: dict[str, list[tuple[datetime, list[float]]]] = {}
+    for row in up_to(telemetry, at_time):
+        tracks.setdefault(row["vessel_id"], []).append(
+            (_utc(row["event_time"]), [row["longitude"], row["latitude"]])
+        )
+    return {
+        vessel: [point for _, point in sorted(points, key=lambda item: item[0])]
+        for vessel, points in sorted(tracks.items())
+    }
+
+
+def window_containing(
+    density_metrics: Iterable[Mapping[str, Any]], at_time: str | datetime
+) -> str | None:
+    """The ``window_start`` of the density window that contains ``at_time``, if any."""
+    timestamp = _utc(at_time)
+    for row in density_metrics:
+        if _utc(row["window_start"]) <= timestamp < _utc(row["window_end"]):
+            return row["window_start"]
+    return None

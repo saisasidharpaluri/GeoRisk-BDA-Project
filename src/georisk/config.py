@@ -71,6 +71,7 @@ class GeoRiskConfig:
     spark_output_dir: Path = Path("output/spark")
     spark_checkpoint_dir: Path = Path("output/spark/checkpoints")
     replay_speed_factor: float = 0.0
+    live_tick_seconds: float = 2.0
     resolution: int = 7
     coverage_mode: str = "overlap"
     density_window_minutes: int = 15
@@ -132,6 +133,13 @@ class GeoRiskConfig:
             or self.replay_speed_factor < 0
         ):
             raise ValueError("GEORISK_REPLAY_SPEED_FACTOR must be a non-negative finite number")
+        if (
+            not isinstance(self.live_tick_seconds, (int, float))
+            or isinstance(self.live_tick_seconds, bool)
+            or not math.isfinite(self.live_tick_seconds)
+            or not 0 <= self.live_tick_seconds <= 60
+        ):
+            raise ValueError("GEORISK_LIVE_TICK_SECONDS must be a number from 0 to 60")
         if self.log_level not in LOG_LEVELS:
             raise ValueError(f"GEORISK_LOG_LEVEL must be one of {LOG_LEVELS}")
         if (
@@ -197,6 +205,7 @@ class GeoRiskConfig:
                 source.get("GEORISK_SPARK_CHECKPOINT_DIR", "output/spark/checkpoints")
             ),
             replay_speed_factor=_float(source, "GEORISK_REPLAY_SPEED_FACTOR", 0.0),
+            live_tick_seconds=_float(source, "GEORISK_LIVE_TICK_SECONDS", 2.0),
             resolution=_integer(source, "GEORISK_RESOLUTION", 7),
             coverage_mode=source.get("GEORISK_H3_COVERAGE_MODE", "overlap"),
             density_window_minutes=_integer(source, "GEORISK_DENSITY_WINDOW_MINUTES", 15),

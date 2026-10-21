@@ -60,8 +60,12 @@ class FileStreamPublisher:
         self._sequences[stream_name] += 1
 
     def flush(self) -> None:
-        """Publish all non-empty pending batches."""
-        for stream_name in self._buffers:
+        """Publish all non-empty pending batches, alerts before telemetry.
+
+        A consumer that lists telemetry before alerts therefore never sees a
+        telemetry batch without the alerts flushed together with it.
+        """
+        for stream_name in sorted(self._buffers, key=lambda name: name != "weather-alerts"):
             self._flush_stream(stream_name)
 
     def close(self) -> None:

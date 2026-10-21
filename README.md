@@ -202,6 +202,7 @@ the new `georisk` command. Use `georisk --help` or `georisk <command> --help`.
 | `georisk replay --speed 60` | Append atomic batches to `GEORISK_STREAM_DIR`; 0 disables pacing |
 | `georisk process` | Write risk, density, quarantine, and run metadata JSONL/JSON |
 | `georisk run` | Generate data and run the complete pipeline, lake, model, and acceptance |
+| `georisk live --tick-seconds 2` | Stream the scenario in timed micro-batches, process each as it lands, then finish like `run` |
 | `georisk validate --report-path output/reports/phase6-run.json` | Recheck report criteria and artifact hashes |
 | `georisk compare-resolutions` | Write `resolution-comparison.json` beside the configured report |
 | `georisk dashboard` | Launch Streamlit using the current Python environment |
@@ -228,6 +229,27 @@ acceptance to exit 0; validation still exits 1. Existing `georisk-run`,
 the last uses the same timed scenario as `georisk compare-resolutions`.
 `georisk replay` skips malformed JSON lines, reports them on stderr, and counts
 them as generated and rejected, so the command exits 1.
+
+### Live mode
+
+```powershell
+georisk live --vessels 300 --tick-seconds 2   # terminal 1
+georisk dashboard                             # terminal 2
+```
+
+`georisk live` takes the same options as `georisk run` plus `--stream-dir` and
+`--tick-seconds` (`GEORISK_LIVE_TICK_SECONDS`, default 2, 0–60). A producer
+thread writes one atomic JSONL batch per 5-minute scenario step to
+`<stream dir>/live`, alerts before telemetry. A consumer picks up each new
+batch, matches it with the incremental `StreamProcessor` (the same code the
+batch path runs, so the final outputs are identical), and rewrites the
+dashboard's input and processed files with live progress, throughput, and
+batch latency in `run-metadata.json`. The dashboard follows a running stream
+every 2 s with a LIVE badge. When the stream ends, the run writes the lake,
+trains the delay model, scores routes, and writes the acceptance report like
+`georisk run`. Ctrl+C marks the run as stopped; the dashboard then says the
+outputs are partial. Event times are still the seeded scenario's, so this is
+a paced replay through a real producer/consumer pipeline, not live AIS data.
 
 ## Phase 8 deployment readiness
 

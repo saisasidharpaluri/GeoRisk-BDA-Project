@@ -38,6 +38,8 @@ def _parser() -> argparse.ArgumentParser:
         "replay": "Replay input JSONL to atomic local stream batches",
         "process": "Process input JSONL into risk and density outputs",
         "run": "Run the complete local pipeline and acceptance checks",
+        "live": "Stream the scenario in timed micro-batches, process each as it lands, "
+        "then finish like run",
         "validate": "Validate a persisted report and its artifact hashes",
         "compare-resolutions": "Compare generated scenario coverage at H3 resolutions 7 and 8",
         "dashboard": "Launch the Streamlit dashboard",
@@ -66,36 +68,36 @@ def _parser() -> argparse.ArgumentParser:
             )
 
         option("--log-level", "GEORISK_LOG_LEVEL")
-        if name in {"generate", "run", "compare-resolutions"}:
+        if name in {"generate", "run", "live", "compare-resolutions"}:
             option("--seed", "GEORISK_SEED", type=int)
             option("--vessel-count", "GEORISK_VESSEL_COUNT", aliases=("--vessels",), type=int)
             option("--duration-minutes", "GEORISK_SCENARIO_DURATION_MINUTES", type=int)
             option("--interval-seconds", "GEORISK_TELEMETRY_INTERVAL_SECONDS", type=int)
-        if name in {"generate", "replay", "process", "run", "dashboard"}:
+        if name in {"generate", "replay", "process", "run", "live", "dashboard"}:
             aliases = ("--output-dir",) if name == "generate" else ()
             option("--input-dir", "GEORISK_INPUT_DIR", aliases=aliases)
-        if name in {"process", "run", "dashboard"}:
+        if name in {"process", "run", "live", "dashboard"}:
             option("--processed-dir", "GEORISK_OUTPUT_DIR", aliases=("--output-dir",))
-        if name in {"process", "run", "dashboard", "spark-stream"}:
+        if name in {"process", "run", "live", "dashboard", "spark-stream"}:
             option("--resolution", "GEORISK_RESOLUTION", type=int)
-        if name in {"process", "run", "dashboard", "spark-stream", "compare-resolutions"}:
+        if name in {"process", "run", "live", "dashboard", "spark-stream", "compare-resolutions"}:
             option("--coverage-mode", "GEORISK_H3_COVERAGE_MODE", choices=("overlap", "center"))
-        if name in {"process", "run", "spark-stream"}:
+        if name in {"process", "run", "live", "spark-stream"}:
             option("--window-minutes", "GEORISK_DENSITY_WINDOW_MINUTES", type=int)
             option("--allowed-lateness-minutes", "GEORISK_ALLOWED_LATENESS_MINUTES", type=int)
             option("--max-future-minutes", "GEORISK_MAX_FUTURE_MINUTES", type=int)
-        if name in {"process", "run"}:
+        if name in {"process", "run", "live"}:
             option(
                 "--strict-validation",
                 "GEORISK_STRICT_VALIDATION",
                 action=argparse.BooleanOptionalAction,
             )
-        if name in {"run", "validate", "compare-resolutions"}:
+        if name in {"run", "live", "validate", "compare-resolutions"}:
             option("--report-path", "GEORISK_REPORT_PATH", aliases=("--report",))
-        if name in {"run", "dashboard"}:
+        if name in {"run", "live", "dashboard"}:
             option("--route-risk-threshold", "GEORISK_ROUTE_RISK_THRESHOLD", type=float)
             option("--route-risk-penalty", "GEORISK_ROUTE_RISK_PENALTY", type=float)
-        if name == "run":
+        if name in {"run", "live"}:
             option("--lake-dir", "GEORISK_LAKE_DIR")
             option("--delay-model", "GEORISK_DELAY_MODEL", choices=("linear", "gbt"))
             option("--evaluation-fraction", "GEORISK_EVALUATION_FRACTION", type=float)
@@ -105,8 +107,10 @@ def _parser() -> argparse.ArgumentParser:
                 "GEORISK_ACCEPTANCE_REQUIRED",
                 action=argparse.BooleanOptionalAction,
             )
-        if name in {"replay", "spark-stream"}:
+        if name in {"replay", "live", "spark-stream"}:
             option("--stream-dir", "GEORISK_STREAM_DIR")
+        if name == "live":
+            option("--tick-seconds", "GEORISK_LIVE_TICK_SECONDS", type=float)
         if name == "replay":
             option("--speed", "GEORISK_REPLAY_SPEED_FACTOR", type=float)
         if name == "spark-stream":
@@ -196,6 +200,29 @@ def _dispatch(
         from georisk.pipeline import run_end_to_end
 
         result = run_end_to_end(settings)
+        status = int(settings.acceptance_required and not result["acceptance"]["passed"])
+    elif command == "live":
+        from georisk.live import run_live
+
+        def progress(live: dict[str, Any]) -> None:
+            clock = str(live.get("scenario_time") or "")[11:16] or "--:--"
+            latency = live.get("last_batch_latency_ms")
+            print(
+                f"georisk live: {clock} UTC | step {live['ticks_published']}/"
+                f"{live['ticks_total']} | {live['last_batch_events']} events | "
+                f"{live['events_processed']} total"
+                + (f" | {latency:.0f} ms batch latency" if latency is not None else ""),
+                file=sys.stderr,
+                flush=True,
+            )
+
+        print(
+            f"georisk live: streaming to {settings.stream_dir / 'live'}; open the dashboard "
+            "with `georisk dashboard` in another terminal.",
+            file=sys.stderr,
+            flush=True,
+        )
+        result = run_live(settings, on_batch=progress)
         status = int(settings.acceptance_required and not result["acceptance"]["passed"])
     elif command == "validate":
         from georisk.operations import validate_report

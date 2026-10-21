@@ -27,16 +27,34 @@ def scored(alerts=(), density=(), at_time="2026-01-01T12:00:00Z", **kwargs):
 def test_active_hazard_on_inner_lane_blocks_it():
     alerts = generate_scenario(ScenarioConfig(vessel_count=0))["weather_alerts"]
     graph = scored(alerts)
-    assert graph["port_a"][0]["risk"] == 0.56
+    # The storm sits on the chokepoint; the leg from Port A to the junction is clear.
+    assert graph["port_a"][0]["risk"] == 0
+    assert graph["junction"][0]["risk"] == 0.56
     assert graph["chokepoint"][0]["risk"] == 0.56
-    assert graph["port_a"][0]["risk_detail"] == {
+    assert graph["junction"][0]["risk_detail"] == {
         "max_severity": 4,
         "alert_ids": ["H1"],
         "max_density": 0,
     }
     route = find_alternative_route(graph, "port_a", "port_b", 0.5)
     assert route["route_changed"] is True
+    assert route["baseline"]["path"] == ["port_a", "junction", "chokepoint", "port_b"]
     assert route["alternative"]["path"] == ["port_a", "outer_lane", "port_b"]
+
+
+def test_hazard_on_outer_lane_detours_through_the_junction():
+    alerts = generate_scenario(ScenarioConfig(vessel_count=0))["weather_alerts"]
+    graph = scored(alerts, at_time="2026-01-01T12:30:00Z")
+    assert graph["port_a"][1]["risk_detail"]["alert_ids"] == ["H2"]
+    assert graph["port_a"][1]["risk"] == 0.42
+    # The cut-across from the junction to the outer waypoint avoids both hazards.
+    assert graph["junction"][1]["risk"] == 0
+    route = find_alternative_route(graph, "port_a", "port_b", 0.4)
+    assert route["alternative"]["path"] == ["port_a", "junction", "outer_lane", "port_b"]
+    after = find_alternative_route(
+        scored(alerts, at_time="2026-01-01T13:30:00Z"), "port_a", "port_b", 0.4
+    )
+    assert after["alternative"]["path"] == ["port_a", "outer_lane", "port_b"]
 
 
 def test_no_hazard_route_unchanged():
@@ -83,8 +101,8 @@ def test_scoring_does_not_mutate_inputs():
 def test_latest_available_alert_revision_wins():
     alert = generate_scenario(ScenarioConfig(vessel_count=0))["weather_alerts"][0]
     revised = dict(alert, event_id="revision", event_time="2026-01-01T12:05:00Z", severity=1)
-    assert scored([alert, revised])["port_a"][0]["risk"] == 0.56
-    assert scored([revised, alert], at_time=revised["event_time"])["port_a"][0]["risk"] == 0.14
+    assert scored([alert, revised])["junction"][0]["risk"] == 0.56
+    assert scored([revised, alert], at_time=revised["event_time"])["junction"][0]["risk"] == 0.14
 
 
 @pytest.mark.parametrize(

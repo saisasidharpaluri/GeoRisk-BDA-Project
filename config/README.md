@@ -18,6 +18,8 @@ positive integers producing 1–1000 samples per vessel. `GEORISK_TELEMETRY_POIN
 is retained for legacy `generate_events()` callers. Local file replay uses
 `GEORISK_STREAM_DIR=output/stream` and `GEORISK_REPLAY_SPEED_FACTOR=0`; zero
 disables pacing, and positive finite values scale event-time gaps.
+`GEORISK_LIVE_TICK_SECONDS` (default 2, 0–60) is the wall-clock pause between
+micro-batches in `georisk live`; 0 streams as fast as possible.
 
 `GEORISK_MAX_FUTURE_MINUTES` (default 60, integer 0–10080) bounds how far
 telemetry may lie ahead of the processing wall clock. Later events are

@@ -157,3 +157,66 @@ def test_layer_toggles_and_auto_refresh(app):
         app.checkbox(key=key).uncheck()
     app.toggle(key="auto_refresh").set_value(True).run()
     assert not app.exception
+
+
+def test_scenario_clock_rewinds_map_and_kpis(app):
+    clock = app.select_slider(key="scenario_time")
+    assert clock.value == "2026-01-01T13:55:00Z"
+    clock.set_value("2026-01-01T12:00:00Z").run()
+    assert not app.exception
+    labels = {metric.label: metric.value for metric in app.metric}
+    # At 12:00 the convoy sits inside the storm at the chokepoint.
+    assert labels["Vessels in a hazard"] != "0 of 10"
+    assert any("12:00 UTC" in caption.value for caption in app.caption)
+
+
+def test_play_advances_and_loops_the_clock(app):
+    app.toggle(key="play").set_value(True).run()
+    assert not app.exception
+    # Playing from the final tick wraps to the first report.
+    assert app.select_slider(key="scenario_time").value == "2026-01-01T12:00:00Z"
+
+
+def test_dashboard_follows_a_running_live_stream(pipeline_dirs, tmp_path, monkeypatch):
+    import json
+    import shutil
+    from datetime import datetime, timezone
+
+    processed = tmp_path / "processed"
+    shutil.copytree(pipeline_dirs.processed_dir, processed)
+    metadata_path = processed / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    metadata["live"] = {
+        "status": "running",
+        "updated_at": now,
+        "ticks_published": 12,
+        "ticks_total": 24,
+        "batches": 12,
+        "batch_files": 13,
+        "events_processed": 121,
+        "throughput_events_per_second": 900,
+        "last_batch_latency_ms": 42.0,
+    }
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    at = _app(
+        monkeypatch,
+        input_dir=pipeline_dirs.input_dir,
+        processed_dir=processed,
+        lake_dir=pipeline_dirs.lake_dir,
+    )
+    assert not at.exception
+    clock = at.select_slider(key="scenario_time")
+    assert clock.disabled
+    assert clock.value == "2026-01-01T13:55:00Z"
+    infos = " ".join(element.value for element in at.info)
+    assert "Live stream · step 12 of 24 · 121 events processed" in infos
+    assert "written when the live stream finishes" in infos
+    assert "Delay estimates are trained when the live stream finishes" not in infos
+    assert not any("acceptance checks passed" in element.value for element in at.success)
+
+    metadata["live"]["status"] = "complete"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    at.run()
+    assert not at.exception
+    assert not at.select_slider(key="scenario_time").disabled

@@ -39,9 +39,18 @@ def demonstration_nodes() -> dict[str, tuple[float, float]]:
 
 
 def demonstration_graph() -> dict[str, list[dict[str, Any]]]:
-    """Return the documented four-node synthetic sea-lane graph."""
+    """Return the documented five-node synthetic sea-lane graph.
+
+    Three routes join the ports: the inner lane through the junction and the
+    chokepoint, the outer lane, and a cut-across from the junction to the
+    outer waypoint that avoids the first outer leg.
+    """
     graph: dict[str, list[dict[str, Any]]] = {
         "port_a": [
+            {"to": "junction", "risk": 0.1},
+            {"to": "outer_lane", "risk": 0.1},
+        ],
+        "junction": [
             {"to": "chokepoint", "risk": 0.9},
             {"to": "outer_lane", "risk": 0.1},
         ],
